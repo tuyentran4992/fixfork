@@ -10,8 +10,10 @@ An autonomous debugging agent for the
 (git-style fork / rollback) to race candidate fixes in parallel.
 
 > Status: **early development.** The offline pipeline (deterministic fake
-> router + local sandbox) runs end to end today. The Nebius sandbox backend and
-> live Token Factory model calls are wired next.
+> router + local sandbox) runs end to end, and live Token Factory model calls
+> are wired and verified (2026-09-28: full diagnosis + 3-branch race on the
+> demo repo, ~$0.003 per run). The Token Factory Sandboxes backend is wired
+> next.
 
 ## How it works
 
@@ -41,6 +43,21 @@ Runs the full pipeline against the bundled demo repo (a small Python module
 with a planted bug) using the deterministic fake router and the local sandbox.
 Outputs a branch race report + the winning patch.
 
+## Quickstart (live, Nebius Token Factory)
+
+```bash
+export NEBIUS_API_KEY=...            # Token Factory key (never commit it)
+python3 -m fixfork run \
+  --repo examples/demo-repo \
+  --test "python3 -m unittest discover -s tests -v" \
+  --out fixfork-report.md
+```
+
+The live router starts at `max_tokens=4096` and retries with a doubled budget
+(up to 16384) when a reasoning model spends the whole budget thinking instead
+of answering — reasoning tokens are billed as completion tokens. Tokens and
+USD cost are tracked per branch in the report.
+
 ## Layout
 
 ```
@@ -51,10 +68,10 @@ examples/demo-repo/ tiny buggy repo used by the offline demo
 
 ## Backends
 
-| Piece | Offline (default here) | Nebius (wired next) |
+| Piece | Offline (default here) | Nebius |
 |---|---|---|
-| Models | `FakeRouter` (deterministic fixtures) | Nemotron 3 Super 120B + Nano 30B via Token Factory |
-| Sandboxes | `LocalSandbox` (temp dirs, no isolation) | Token Factory Sandboxes (fork / rollback) |
+| Models | `FakeRouter` (deterministic fixtures) | wired & verified: Nemotron 3 Super 120B (diagnosis) + Nano 30B (loop) via Token Factory |
+| Sandboxes | `LocalSandbox` (temp dirs, no isolation) | Token Factory Sandboxes (fork / rollback) — wired next |
 
 ## License
 

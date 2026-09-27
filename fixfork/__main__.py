@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--branches", type=int, default=3, help="number of hypotheses/branches")
     run.add_argument("--max-rounds", type=int, default=2, help="max test rounds per branch")
+    run.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail (exit 2) instead of falling back to FakeRouter when the live router cannot start",
+    )
     run.add_argument("--out", default="fixfork-report.md", help="report output path")
     run.add_argument("--json", action="store_true", help="also print a JSON summary")
     return parser
@@ -59,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
             print("router: NebiusRouter (Token Factory)")
         except RouterError as exc:
             print(f"! {exc}")
+            if args.strict:
+                print("! --strict: refusing to fall back to FakeRouter")
+                return 2
             print("! falling back to FakeRouter for this run")
             router = FakeRouter()
 
@@ -73,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     Path(args.out).write_text(render_markdown(report), encoding="utf-8")
+    if report.diagnosis_raw:
+        diag_path = Path(str(args.out) + ".diagnosis.json")
+        diag_path.write_text(report.diagnosis_raw, encoding="utf-8")
+        print(f"raw diagnosis -> {diag_path}")
     print(f"baseline: {report.baseline.summary}")
     for branch in report.branches:
         print(
@@ -80,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
             f"{branch.outcome.summary} | {branch.lines_changed} line(s) changed"
         )
     print(f"winner: {report.winner_id} - {report.winner_reason}")
+    print(
+        f"tokens: {report.total_tokens} ({report.diagnosis_tokens} diagnosis) "
+        f"| cost ~ ${report.total_cost_usd:.4f}"
+    )
     print(f"report -> {args.out}")
     if args.json:
         print(json.dumps(summary_dict(report), indent=2))

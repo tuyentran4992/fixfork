@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from fixfork.fakes import FakeRouter
+from fixfork.fakes import DEMO_HYPOTHESES, FakeRouter
 from fixfork.models import BranchStatus
 from fixfork.pipeline import run_pipeline
 from fixfork.sandbox_runner import LocalSandbox
@@ -28,6 +28,10 @@ class PipelineFakeTest(unittest.TestCase):
         self.assertEqual(statuses[1], BranchStatus.GREEN)
         self.assertEqual(statuses[2], BranchStatus.RED)
         self.assertEqual(statuses[3], BranchStatus.RED)
+
+        # 2b. hypotheses retained for the report
+        self.assertEqual(len(report.hypotheses), 3)
+        self.assertEqual(report.hypotheses[0].title, DEMO_HYPOTHESES[0]["title"])
 
         # 3. winner is the branch that passed, with a usable diff
         self.assertEqual(report.winner_id, 1)

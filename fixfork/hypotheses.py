@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .model_router import ModelRouter
+from .model_router import ModelReply, ModelRouter
 from .models import Edit, Hypothesis
 
 
@@ -14,23 +14,74 @@ class HypothesisError(RuntimeError):
 
 PROMPT_TEMPLATE = """You are FixFork's diagnosis model.
 
-A repository has a failing test. Read the failure log below and propose {n}
-DIVERGENT root-cause hypotheses: each must be a different kind of explanation
-(not three variations of the same guess) and must come with concrete edits.
+A repository has a failing test. Read the repository files and the failure log
+below and propose {n} DIVERGENT root-cause hypotheses: each must be a different
+kind of explanation (not three variations of the same guess) and must come with
+concrete edits.
 
 Reply with ONLY a JSON array, no prose, no markdown fences. Each element:
 {{"title": "...", "rationale": "...", "edits": [{{"file": "path/relative/to/repo", "find": "exact existing text", "replace": "replacement text"}}]}}
 
+The `find` text MUST be copied EXACTLY (character for character, whitespace
+included) from the repository files below - the edit is applied by an exact
+string match, so any paraphrase will fail.
+
 Repository: {repo}
 Failing test command: {test_command}
+
+Repository files:
+{files}
 
 Failure log (tail):
 {log}
 """
 
+# Prompt-size guards: whole small repos fit, big ones get an explicit note.
+MAX_FILE_CHARS = 8000
+MAX_TOTAL_FILES_CHARS = 24000
 
-def build_prompt(repo: str, test_command: str, log: str, n: int = 3) -> str:
-    return PROMPT_TEMPLATE.format(n=n, repo=repo, test_command=test_command, log=log)
+
+def render_files(
+    files: dict[str, str] | None,
+    max_file_chars: int = MAX_FILE_CHARS,
+    max_total_chars: int = MAX_TOTAL_FILES_CHARS,
+) -> str:
+    """Format a repo tree for the prompt, with size guards and honest notes."""
+    if not files:
+        return "(no repository files provided)"
+    blocks: list[str] = []
+    skipped: list[str] = []
+    used = 0
+    for rel in sorted(files):
+        content = files[rel]
+        if len(content) > max_file_chars:
+            skipped.append(f"{rel} (too large: {len(content)} chars)")
+            continue
+        block = f"--- {rel} ---\n{content.rstrip()}\n"
+        if used + len(block) > max_total_chars:
+            skipped.append(f"{rel} (over total prompt budget)")
+            continue
+        blocks.append(block)
+        used += len(block)
+    if skipped:
+        blocks.append("(not shown: " + "; ".join(skipped) + ")")
+    return "\n".join(blocks)
+
+
+def build_prompt(
+    repo: str,
+    test_command: str,
+    log: str,
+    n: int = 3,
+    files: dict[str, str] | None = None,
+) -> str:
+    return PROMPT_TEMPLATE.format(
+        n=n,
+        repo=repo,
+        test_command=test_command,
+        log=log,
+        files=render_files(files),
+    )
 
 
 def extract_json_array(text: str) -> str:
@@ -110,6 +161,9 @@ def generate_hypotheses(
     test_command: str,
     log: str,
     n: int = 3,
-) -> tuple[list[Hypothesis], int]:
-    reply = router.complete("reason", build_prompt(repo, test_command, log, n=n))
-    return parse_hypotheses(reply.text, n=n), reply.tokens_used
+    files: dict[str, str] | None = None,
+) -> tuple[list[Hypothesis], ModelReply]:
+    reply: ModelReply = router.complete(
+        "reason", build_prompt(repo, test_command, log, n=n, files=files)
+    )
+    return parse_hypotheses(reply.text, n=n), reply

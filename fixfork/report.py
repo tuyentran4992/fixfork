@@ -23,13 +23,20 @@ def summary_dict(report: RunReport) -> dict:
                 "failed": b.outcome.failed,
                 "lines_changed": b.lines_changed,
                 "tokens_used": b.tokens_used,
+                "cost_usd": round(b.cost_usd, 6),
                 "rounds": b.rounds,
             }
             for b in report.branches
         ],
         "winner_id": report.winner_id,
         "winner_reason": report.winner_reason,
-        "tokens_total": sum(b.tokens_used for b in report.branches),
+        "hypotheses": [
+            {"id": h.id, "title": h.title, "rationale": h.rationale,
+             "edit_files": sorted({e.file for e in h.edits})}
+            for h in report.hypotheses
+        ],
+        "tokens_total": report.total_tokens,
+        "cost_usd_total": round(report.total_cost_usd, 6),
         "notes": report.notes,
     }
 
@@ -44,15 +51,32 @@ def render_markdown(report: RunReport) -> str:
         "",
         "## Branches",
         "",
-        "| Branch | Status | Tests | Lines changed | Tokens |",
-        "|---|---|---|---|---|",
+        "| Branch | Status | Tests | Lines changed | Tokens | Cost ($) |",
+        "|---|---|---|---|---|---|",
     ]
     for branch in report.branches:
         lines.append(
             f"| {branch.hypothesis_id} | {branch.status.value} | "
-            f"{branch.outcome.summary} | {branch.lines_changed} | {branch.tokens_used} |"
+            f"{branch.outcome.summary} | {branch.lines_changed} | {branch.tokens_used} | "
+            f"{branch.cost_usd:.5f} |"
         )
-    lines += ["", "## Verdict", "", f"- Winner: **branch {report.winner_id}**", f"- Why: {report.winner_reason}", ""]
+    lines += [
+        "",
+        "## Verdict",
+        "",
+        f"- Winner: **branch {report.winner_id}**",
+        f"- Why: {report.winner_reason}",
+        f"- Tokens: **{report.total_tokens}** total ({report.diagnosis_tokens} diagnosis) "
+        f"· cost ~ **${report.total_cost_usd:.4f}**",
+        "",
+    ]
+
+    if report.hypotheses:
+        lines += ["## Hypotheses (raced)", ""]
+        for h in report.hypotheses:
+            files = ", ".join(sorted({e.file for e in h.edits}))
+            lines.append(f"- **{h.id}. {h.title}** — {h.rationale} _(files: {files})_")
+        lines.append("")
 
     if report.winner_diff:
         lines += ["## Winning diff", "", "```diff", report.winner_diff.rstrip("\n"), "```", ""]

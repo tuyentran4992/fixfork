@@ -51,6 +51,7 @@ class BranchResult:
     outcome: TestOutcome = field(default_factory=TestOutcome)
     lines_changed: int = 0
     tokens_used: int = 0
+    cost_usd: float = 0.0
     rounds: int = 0
     log_tail: str = ""
 
@@ -65,3 +66,15 @@ class RunReport:
     winner_reason: str = ""
     winner_diff: str = ""
     notes: list[str] = field(default_factory=list)
+    hypotheses: list[Hypothesis] = field(default_factory=list)
+    diagnosis_raw: str = ""
+    diagnosis_tokens: int = 0
+    diagnosis_cost_usd: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.diagnosis_tokens + sum(b.tokens_used for b in self.branches)
+
+    @property
+    def total_cost_usd(self) -> float:
+        return self.diagnosis_cost_usd + sum(b.cost_usd for b in self.branches)

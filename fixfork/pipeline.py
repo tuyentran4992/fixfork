@@ -6,7 +6,7 @@ import difflib
 import json
 from pathlib import Path
 
-from .hypotheses import HypothesisError, build_prompt, parse_hypotheses
+from .hypotheses import HypothesisError, build_prompt, parse_hypotheses, render_files
 from .judge import pick_winner
 from .model_router import ModelRouter, RouterError
 from .models import BranchResult, BranchStatus, Edit, RunReport
@@ -20,8 +20,14 @@ edit, or reply with an empty list if you have no further idea.
 
 Reply with ONLY a JSON object: {{"edits": [{{"file": "...", "find": "exact existing text", "replace": "..."}}]}}
 
+The `find` text MUST be copied EXACTLY from the branch files below (the branch
+already contains the earlier edit).
+
 Applied the branch hypothesis: {title}
 Test command: {test_command}
+
+Branch files:
+{files}
 
 Failure log (tail):
 {log}
@@ -89,13 +95,27 @@ def run_pipeline(
     log = baseline_exec.output[-log_tail:] if baseline_exec.output else "(no output)"
 
     try:
-        reply = router.complete("reason", build_prompt(report.repo, test_command, log, n=branches))
-        hypotheses = parse_hypotheses(reply.text, n=branches)
-    except (RouterError, HypothesisError) as exc:
-        report.notes.append(f"hypothesis step failed: {exc}")
+        reply = router.complete(
+            "reason",
+            build_prompt(report.repo, test_command, log, n=branches, files=base_files),
+        )
+    except RouterError as exc:
+        report.notes.append(f"hypothesis call failed: {exc}")
         return report
+    # keep the raw reply (and its cost) even if parsing fails - it is the only
+    # way to debug what the model actually said
+    report.diagnosis_raw = reply.text
+    report.diagnosis_tokens = reply.tokens_used
+    report.diagnosis_cost_usd = reply.cost_usd
+    try:
+        hypotheses = parse_hypotheses(reply.text, n=branches)
+    except HypothesisError as exc:
+        report.notes.append(f"hypothesis reply did not parse: {exc}")
+        return report
+    report.hypotheses = hypotheses
     report.notes.append(
-        f"diagnosis model proposed {len(hypotheses)} hypotheses ({reply.tokens_used} tokens)"
+        f"diagnosis model proposed {len(hypotheses)} hypotheses "
+        f"({reply.tokens_used} tokens, ${reply.cost_usd:.4f})"
     )
 
     for hypothesis in hypotheses:
@@ -113,6 +133,7 @@ def run_pipeline(
                         LOOP_PROMPT_TEMPLATE.format(
                             title=hypothesis.title,
                             test_command=test_command,
+                            files=render_files(sandbox.read_tree(sid)),
                             log=exec_result.output[-log_tail:],
                         ),
                     )
@@ -120,6 +141,7 @@ def run_pipeline(
                 except (RouterError, HypothesisError):
                     break
                 result.tokens_used += loop_reply.tokens_used
+                result.cost_usd += loop_reply.cost_usd
                 if not extra_edits:
                     break
                 result.lines_changed += sandbox.apply_edits(sid, extra_edits)

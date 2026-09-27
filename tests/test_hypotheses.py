@@ -66,12 +66,18 @@ class ParseHypothesesTest(unittest.TestCase):
 class GenerateHypothesesTest(unittest.TestCase):
     def test_fake_router_round_trip(self):
         router = FakeRouter()
-        hypotheses, tokens = generate_hypotheses(
-            router, "examples/demo-repo", "python3 -m unittest", "boom", n=3
+        hypotheses, reply = generate_hypotheses(
+            router,
+            "examples/demo-repo",
+            "python3 -m unittest",
+            "boom",
+            n=3,
+            files={"src/tax.py": "x = 1\n"},
         )
         self.assertEqual(len(hypotheses), 3)
-        self.assertEqual(tokens, 0)
+        self.assertEqual(reply.tokens_used, 0)
         self.assertEqual(router.calls[0][0], "reason")
+        self.assertIn("--- src/tax.py ---", router.calls[0][1])
 
 
 if __name__ == "__main__":
