@@ -1,0 +1,14 @@
+[project]
+name = "fixfork"
+version = "0.0.1"
+description = "Fork three hypotheses, race them in sandboxes, keep the fix that passes."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+fixfork = "fixfork.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"

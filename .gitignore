@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# FixFork run artifacts
+fixfork-report.md
+fixfork-report.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
