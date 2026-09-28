@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .events import JsonlEventSink, NullSink
 from .fakes import FakeRouter
 from .model_router import NebiusRouter, RouterError
 from .pipeline import run_pipeline
@@ -52,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--html", action="store_true", help="also write an HTML report (<out>.html)")
     run.add_argument("--json", action="store_true", help="also print a JSON summary")
+    run.add_argument(
+        "--events",
+        default=None,
+        metavar="PATH",
+        help="write a JSONL event log of the run (also streams live progress on stdout)",
+    )
     return parser
 
 
@@ -78,14 +85,20 @@ def main(argv: list[str] | None = None) -> int:
             router = FakeRouter()
 
     sandbox = LocalSandbox()
-    report = run_pipeline(
-        repo=args.repo,
-        test_command=args.test_command,
-        router=router,
-        sandbox=sandbox,
-        branches=args.branches,
-        max_rounds=args.max_rounds,
-    )
+    sink = JsonlEventSink(args.events, echo=True) if args.events else NullSink()
+    try:
+        report = run_pipeline(
+            repo=args.repo,
+            test_command=args.test_command,
+            router=router,
+            sandbox=sandbox,
+            branches=args.branches,
+            max_rounds=args.max_rounds,
+            events=sink,
+        )
+    finally:
+        if isinstance(sink, JsonlEventSink):
+            sink.close()
 
     Path(args.out).write_text(render_markdown(report), encoding="utf-8")
     if report.winner_diff:

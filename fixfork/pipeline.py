@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .events import EventSink, NullSink
 from .hypotheses import HypothesisError, build_prompt, parse_hypotheses, render_files
 from .judge import pick_winner
 from .model_router import ModelRouter, RouterError
@@ -66,13 +67,17 @@ def run_pipeline(
     branches: int = 3,
     max_rounds: int = 2,
     log_tail: int = 2000,
+    events: EventSink | None = None,
 ) -> RunReport:
+    sink: EventSink = events if events is not None else NullSink()
     repo_path = Path(repo)
     report = RunReport(repo=str(repo_path), test_command=test_command)
+    sink.emit("run_start", repo=str(repo_path), test_command=test_command, branches=branches)
 
     baseline_sid = sandbox.create(repo_path, "baseline")
     baseline_exec = sandbox.run(baseline_sid, test_command)
     report.baseline = parse_unittest_output(baseline_exec.output, baseline_exec.returncode)
+    sink.emit("baseline_done", ok=report.baseline.ok, summary=report.baseline.summary)
     if report.baseline.ok:
         report.notes.append("baseline test run already passes - nothing to fix")
         return report
@@ -104,9 +109,17 @@ def run_pipeline(
         f"diagnosis model proposed {len(hypotheses)} hypotheses "
         f"({reply.tokens_used} tokens, ${reply.cost_usd:.4f})"
     )
+    sink.emit(
+        "hypotheses_ready",
+        n=len(hypotheses),
+        titles=[h.title for h in hypotheses],
+        tokens=reply.tokens_used,
+        cost=round(reply.cost_usd, 6),
+    )
 
     for hypothesis in hypotheses:
         sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
+        sink.emit("branch_started", id=hypothesis.id, title=hypothesis.title)
         result = BranchResult(hypothesis_id=hypothesis.id)
         try:
             result.lines_changed = sandbox.apply_edits(sid, hypothesis.edits)
@@ -143,17 +156,31 @@ def run_pipeline(
             result.status = BranchStatus.ERROR
             result.log_tail = f"sandbox error: {exc}"
         report.branches.append(result)
+        sink.emit(
+            "branch_done",
+            id=hypothesis.id,
+            status=result.status.value,
+            summary=result.outcome.summary,
+            tests_ok=result.outcome.ok,
+            lines_changed=result.lines_changed,
+            tokens=result.tokens_used,
+            cost=round(result.cost_usd, 6),
+            rounds=result.rounds,
+        )
 
     winner_id, reason = pick_winner(report.branches)
     report.winner_id = winner_id
     report.winner_reason = reason
+    sink.emit("winner", id=winner_id, reason=reason)
 
     if winner_id is not None:
         winner_sid = f"branch-{winner_id}"
         for branch in report.branches:
             if branch.hypothesis_id != winner_id:
                 sandbox.rollback(f"branch-{branch.hypothesis_id}", base_snapshot)
+                sink.emit("rollback", id=branch.hypothesis_id)
         if any(b.status is BranchStatus.GREEN for b in report.branches if b.hypothesis_id == winner_id):
             report.winner_diff = build_patch(base_files, sandbox.read_tree(winner_sid))
 
+    sink.emit("done", total_tokens=report.total_tokens, cost=round(report.total_cost_usd, 6))
     return report
