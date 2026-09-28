@@ -1,0 +1,14 @@
+{"t": 0.0, "event": "run_start", "repo": "examples/demo-repo", "test_command": "python3 -m unittest discover -s tests", "branches": 3}
+{"t": 0.137, "event": "baseline_done", "ok": false, "summary": "FAILED (2 of 2)"}
+{"t": 3.813, "event": "research_done", "query": "test_discount_reduces_total AssertionError: 121.0 not less than 100.0 python3 -m unittest discover -s tests", "n_sources": 5, "sources": ["https://github.com/cgoldberg/python-unittest-tutorial", "https://github.com/cgoldberg/python-unittest-tutorial/blob/master/README.md", "https://assets.publishing.service.gov.uk/media/5a7de55140f0b62302687d08/FOI_30799_Statistics.pdf"]}
+{"t": 51.859, "event": "hypotheses_ready", "n": 3, "titles": ["Discount sign error", "VAT applied before discount", "Test expectations are wrong"], "tokens": 5071, "cost": 0.003713}
+{"t": 51.862, "event": "branch_started", "id": 1, "title": "Discount sign error"}
+{"t": 51.975, "event": "branch_done", "id": 1, "status": "green", "summary": "OK (2 tests)", "tests_ok": true, "lines_changed": 1, "tokens": 0, "cost": 0.0, "rounds": 1}
+{"t": 51.976, "event": "branch_started", "id": 2, "title": "VAT applied before discount"}
+{"t": 52.073, "event": "branch_done", "id": 2, "status": "green", "summary": "OK (2 tests)", "tests_ok": true, "lines_changed": 3, "tokens": 0, "cost": 0.0, "rounds": 1}
+{"t": 52.074, "event": "branch_started", "id": 3, "title": "Test expectations are wrong"}
+{"t": 52.177, "event": "branch_done", "id": 3, "status": "green", "summary": "OK (2 tests)", "tests_ok": true, "lines_changed": 2, "tokens": 0, "cost": 0.0, "rounds": 1}
+{"t": 52.177, "event": "winner", "id": 1, "reason": "branch 1 passed the tests (OK (2 tests)) with 1 line(s) changed"}
+{"t": 52.179, "event": "rollback", "id": 2}
+{"t": 52.181, "event": "rollback", "id": 3}
+{"t": 52.182, "event": "done", "total_tokens": 5071, "cost": 0.003713}

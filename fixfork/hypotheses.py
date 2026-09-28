@@ -74,14 +74,18 @@ def build_prompt(
     log: str,
     n: int = 3,
     files: dict[str, str] | None = None,
+    research_block: str = "",
 ) -> str:
-    return PROMPT_TEMPLATE.format(
+    prompt = PROMPT_TEMPLATE.format(
         n=n,
         repo=repo,
         test_command=test_command,
         log=log,
         files=render_files(files),
     )
+    if research_block:
+        prompt += "\n" + research_block.rstrip() + "\n"
+    return prompt
 
 
 def extract_json_array(text: str) -> str:

@@ -39,6 +39,8 @@ def summary_dict(report: RunReport) -> dict:
         ],
         "tokens_total": report.total_tokens,
         "cost_usd_total": round(report.total_cost_usd, 6),
+        "research_query": report.research_query,
+        "research_sources": report.research_sources,
         "notes": report.notes,
     }
 
@@ -78,6 +80,15 @@ def render_markdown(report: RunReport) -> str:
         for h in report.hypotheses:
             files = ", ".join(sorted({e.file for e in h.edits}))
             lines.append(f"- **{h.id}. {h.title}** — {h.rationale} _(files: {files})_")
+        lines.append("")
+
+    if report.research_query:
+        lines += [
+            "## Web research (Tavily)",
+            "",
+            f"- Query: `{report.research_query}`",
+        ]
+        lines += [f"- Source: {url}" for url in report.research_sources]
         lines.append("")
 
     if report.winner_diff:
@@ -178,6 +189,18 @@ def render_html(report: RunReport) -> str:
                 f"<i>(files: {esc(files)})</i></li>"
             )
         parts.append("</ul>")
+
+    if report.research_query:
+        parts.append("<h2>Web research (Tavily)</h2>")
+        parts.append(
+            f'<p class="meta">Query: <code>{esc(report.research_query)}</code> '
+            "&middot; one real search call, keyless</p>"
+        )
+        if report.research_sources:
+            parts.append("<ul>")
+            for url in report.research_sources:
+                parts.append(f'<li><a href="{esc(url)}">{esc(url)}</a></li>')
+            parts.append("</ul>")
 
     if report.winner_diff:
         parts.append("<h2>Winning patch</h2>")

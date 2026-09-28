@@ -13,6 +13,7 @@ from .fakes import FakeRouter
 from .model_router import NebiusRouter, RouterError
 from .pipeline import run_pipeline
 from .report import render_html, render_markdown, summary_dict
+from .research import ResearchError, TavilyResearch
 from .sandbox_runner import LocalSandbox
 
 
@@ -59,12 +60,45 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="write a JSONL event log of the run (also streams live progress on stdout)",
     )
+    run.add_argument(
+        "--research",
+        choices=["off", "tavily"],
+        default=None,
+        help="web-search grounding for diagnosis via the Tavily API "
+        "(default: tavily on live runs, off with --fake)",
+    )
+
+    research = sub.add_parser(
+        "research",
+        help="run one Tavily search and print a compact JSON summary (keyless, no account)",
+    )
+    research.add_argument("--query", required=True, help="search query")
+    research.add_argument(
+        "--max-results", type=int, default=5, dest="max_results", help="number of results"
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "research":
+        client = TavilyResearch(max_results=args.max_results)
+        try:
+            result = client.search(args.query)
+        except ResearchError as exc:
+            print(f"! {exc}")
+            return 2
+        summary = {
+            "query": result.query,
+            "n_sources": result.n_sources,
+            "access": "api-key" if client.api_key else "keyless",
+            "sources": [{"title": s["title"], "url": s["url"]} for s in result.sources],
+        }
+        print(json.dumps(summary, indent=2))
+        return 0
+
     if args.command != "run":
         parser.print_help()
         return 2
@@ -84,6 +118,15 @@ def main(argv: list[str] | None = None) -> int:
             print("! falling back to FakeRouter for this run")
             router = FakeRouter()
 
+    research_client = None
+    research_mode = args.research or ("off" if args.fake else "tavily")
+    if research_mode == "tavily":
+        research_client = TavilyResearch()
+        access = "api key from env" if research_client.api_key else "keyless"
+        print(f"research: Tavily web search ({access})")
+    else:
+        print("research: off")
+
     sandbox = LocalSandbox()
     sink = JsonlEventSink(args.events, echo=True) if args.events else NullSink()
     try:
@@ -95,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             branches=args.branches,
             max_rounds=args.max_rounds,
             events=sink,
+            research=research_client,
         )
     finally:
         if isinstance(sink, JsonlEventSink):
@@ -116,6 +160,11 @@ def main(argv: list[str] | None = None) -> int:
         diag_path.write_text(report.diagnosis_raw, encoding="utf-8")
         print(f"raw diagnosis -> {diag_path}")
     print(f"baseline: {report.baseline.summary}")
+    if report.research_query:
+        print(
+            f"research: {len(report.research_sources)} source(s) for "
+            f"\"{report.research_query[:60]}\""
+        )
     for branch in report.branches:
         print(
             f"  branch {branch.hypothesis_id}: {branch.status.value} | "

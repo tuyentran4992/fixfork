@@ -37,6 +37,13 @@ class NullSink:
 
 def human_line(kind: str, data: dict) -> str | None:
     """One-line terminal rendering of an event (English, goes into captures)."""
+    if kind == "research_done":
+        return (
+            f"web research: {data.get('n_sources')} source(s) for "
+            f"\"{str(data.get('query', ''))[:60]}\""
+        )
+    if kind == "research_failed":
+        return f"web research: failed ({data.get('error', '')}) - continuing without it"
     if kind == "baseline_done":
         return f"baseline: {data.get('summary', '?')}"
     if kind == "hypotheses_ready":

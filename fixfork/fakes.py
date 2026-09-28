@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from .model_router import ModelReply
+from .research import ResearchError, ResearchResult
 
 # Canned "reason" reply: three divergent hypotheses about the planted bug in
 # examples/demo-repo (a discount multiplier applied with the wrong sign).
@@ -49,6 +50,34 @@ DEMO_HYPOTHESES = [
 ]
 
 DEMO_LOOP_EDITS = {"edits": []}  # loop model: no further change -> branch ends red
+
+
+class FakeResearch:
+    """Deterministic stand-in for the Tavily search (no network, zero cost)."""
+
+    def __init__(self, sources: list[dict] | None = None, fail: bool = False) -> None:
+        self.sources = (
+            sources
+            if sources is not None
+            else [
+                {
+                    "title": "Known pattern: flipped sign in a multiplier",
+                    "url": "https://example.com/known-issue",
+                    "snippet": (
+                        "Offline demo source - the sign of the discount multiplier "
+                        "is a common cause of this failure kind."
+                    ),
+                }
+            ]
+        )
+        self.fail = fail
+        self.queries: list[str] = []
+
+    def search(self, query: str) -> ResearchResult:
+        self.queries.append(query)
+        if self.fail:
+            raise ResearchError("offline demo: search disabled")
+        return ResearchResult(query=query, sources=list(self.sources))
 
 
 class FakeRouter:

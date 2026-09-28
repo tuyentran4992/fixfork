@@ -70,6 +70,8 @@ class RunReport:
     diagnosis_raw: str = ""
     diagnosis_tokens: int = 0
     diagnosis_cost_usd: float = 0.0
+    research_query: str = ""
+    research_sources: list[str] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:

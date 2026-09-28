@@ -11,6 +11,7 @@ from .judge import pick_winner
 from .model_router import ModelRouter, RouterError
 from .models import BranchResult, BranchStatus, Edit, RunReport
 from .patch_export import build_patch
+from .research import ResearchClient, ResearchError, build_query, render_research_block
 from .sandbox_runner import SandboxError, SandboxRunner
 from .testparse import parse_unittest_output
 
@@ -68,6 +69,7 @@ def run_pipeline(
     max_rounds: int = 2,
     log_tail: int = 2000,
     events: EventSink | None = None,
+    research: ResearchClient | None = None,
 ) -> RunReport:
     sink: EventSink = events if events is not None else NullSink()
     repo_path = Path(repo)
@@ -86,10 +88,41 @@ def run_pipeline(
     base_snapshot = sandbox.checkpoint(baseline_sid)
     log = baseline_exec.output[-log_tail:] if baseline_exec.output else "(no output)"
 
+    research_block = ""
+    if research is not None:
+        query = build_query(log, test_command)
+        try:
+            research_result = research.search(query)
+            research_block = render_research_block(research_result)
+            report.research_query = query
+            report.research_sources = [
+                source["url"] for source in research_result.sources if source["url"]
+            ]
+            report.notes.append(
+                f"web research (Tavily): {research_result.n_sources} source(s) "
+                f"for query: {query}"
+            )
+            sink.emit(
+                "research_done",
+                query=query,
+                n_sources=research_result.n_sources,
+                sources=report.research_sources[:3],
+            )
+        except ResearchError as exc:
+            report.notes.append(f"web research skipped: {exc}")
+            sink.emit("research_failed", query=query, error=str(exc)[:160])
+
     try:
         reply = router.complete(
             "reason",
-            build_prompt(report.repo, test_command, log, n=branches, files=base_files),
+            build_prompt(
+                report.repo,
+                test_command,
+                log,
+                n=branches,
+                files=base_files,
+                research_block=research_block,
+            ),
         )
     except RouterError as exc:
         report.notes.append(f"hypothesis call failed: {exc}")

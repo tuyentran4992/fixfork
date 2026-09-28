@@ -1,0 +1,10 @@
+diff --git a/src/tax.py b/src/tax.py
+--- a/src/tax.py
++++ b/src/tax.py
+@@ -6,5 +6,5 @@
+ def order_total(prices, discount=0.0, vat_rate=VAT_RATE):
+     """Total for an order: prices summed, discount applied, then VAT added."""
+     subtotal = sum(prices)
+-    discounted = subtotal * (1 + discount)
++    discounted = subtotal * (1 - discount)
+     return round(discounted + discounted * vat_rate, 2)
