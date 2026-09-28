@@ -1,5 +1,7 @@
 # FixFork
 
+**MIT licensed** — see [LICENSE](LICENSE).
+
 **Give a repo and a failing test. FixFork forks three hypotheses, races them
 in sandboxes, and hands back the branch that passes - with evidence.**
 
