@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 import json
 from pathlib import Path
 
@@ -10,6 +9,7 @@ from .hypotheses import HypothesisError, build_prompt, parse_hypotheses, render_
 from .judge import pick_winner
 from .model_router import ModelRouter, RouterError
 from .models import BranchResult, BranchStatus, Edit, RunReport
+from .patch_export import build_patch
 from .sandbox_runner import SandboxError, SandboxRunner
 from .testparse import parse_unittest_output
 
@@ -56,19 +56,6 @@ def _parse_loop_edits(text: str) -> list[Edit]:
             raise HypothesisError("loop reply has an invalid edit")
         parsed.append(edit)
     return parsed
-
-
-def _diff(base_files: dict[str, str], winner_files: dict[str, str]) -> str:
-    chunks: list[str] = []
-    for rel in sorted(set(base_files) | set(winner_files)):
-        before = base_files.get(rel, "").splitlines(keepends=True)
-        after = winner_files.get(rel, "").splitlines(keepends=True)
-        if before == after:
-            continue
-        chunks.extend(
-            difflib.unified_diff(before, after, fromfile=f"a/{rel}", tofile=f"b/{rel}")
-        )
-    return "".join(chunks)
 
 
 def run_pipeline(
@@ -167,6 +154,6 @@ def run_pipeline(
             if branch.hypothesis_id != winner_id:
                 sandbox.rollback(f"branch-{branch.hypothesis_id}", base_snapshot)
         if any(b.status is BranchStatus.GREEN for b in report.branches if b.hypothesis_id == winner_id):
-            report.winner_diff = _diff(base_files, sandbox.read_tree(winner_sid))
+            report.winner_diff = build_patch(base_files, sandbox.read_tree(winner_sid))
 
     return report

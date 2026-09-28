@@ -12,8 +12,9 @@ An autonomous debugging agent for the
 > Status: **early development.** The offline pipeline (deterministic fake
 > router + local sandbox) runs end to end, and live Token Factory model calls
 > are wired and verified (2026-09-28: full diagnosis + 3-branch race on the
-> demo repo, ~$0.003 per run). The Token Factory Sandboxes backend is wired
-> next.
+> demo repo, ~$0.003 per run; the exported patch was re-applied to a pristine
+> checkout with `git apply` and the tests passed). The Token Factory Sandboxes
+> backend is wired next.
 
 ## How it works
 
@@ -26,8 +27,10 @@ An autonomous debugging agent for the
    Nemotron 3 Nano (the small, fast loop model) to stretch credits.
 5. **Evidence-based verdict** - score = tests green, then fewest lines changed.
    The winning branch wins; losers are rolled back.
-6. **Output** - a unified diff of the winning fix plus a report of every branch
-   tried (what it changed, test outcome, tokens spent).
+6. **Output** - three artifacts per run: the race report (markdown, plus
+   `--html` for a self-contained page), a **git-applyable patch** of the
+   winning fix (`git apply fixfork-report.patch`), and the raw model reply
+   for auditing.
 
 ## Quickstart (offline demo, no API key needed)
 
@@ -41,7 +44,14 @@ python3 -m fixfork run \
 
 Runs the full pipeline against the bundled demo repo (a small Python module
 with a planted bug) using the deterministic fake router and the local sandbox.
-Outputs a branch race report + the winning patch.
+Outputs a branch race report, a git-applyable `fixfork-report.patch` with the
+winning fix, and (with `--html`) a single-file HTML report.
+
+Apply the winner anywhere and re-run the tests:
+
+```bash
+git apply fixfork-report.patch   # on a pristine checkout
+```
 
 ## Quickstart (live, Nebius Token Factory)
 

@@ -11,7 +11,7 @@ from . import __version__
 from .fakes import FakeRouter
 from .model_router import NebiusRouter, RouterError
 from .pipeline import run_pipeline
-from .report import render_markdown, summary_dict
+from .report import render_html, render_markdown, summary_dict
 from .sandbox_runner import LocalSandbox
 
 
@@ -44,6 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="fail (exit 2) instead of falling back to FakeRouter when the live router cannot start",
     )
     run.add_argument("--out", default="fixfork-report.md", help="report output path")
+    run.add_argument(
+        "--patch",
+        default=None,
+        help="write the winning diff as a git-applyable patch "
+        "(default: same path as --out with a .patch suffix)",
+    )
+    run.add_argument("--html", action="store_true", help="also write an HTML report (<out>.html)")
     run.add_argument("--json", action="store_true", help="also print a JSON summary")
     return parser
 
@@ -81,6 +88,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     Path(args.out).write_text(render_markdown(report), encoding="utf-8")
+    if report.winner_diff:
+        patch_path = Path(args.patch) if args.patch else Path(args.out).with_suffix(".patch")
+        patch_path.write_text(report.winner_diff, encoding="utf-8")
+        print(f"patch -> {patch_path}")
+    else:
+        print("patch: none written (no winning diff this run)")
+    if args.html:
+        html_path = Path(args.out).with_suffix(".html")
+        html_path.write_text(render_html(report), encoding="utf-8")
+        print(f"html -> {html_path}")
     if report.diagnosis_raw:
         diag_path = Path(str(args.out) + ".diagnosis.json")
         diag_path.write_text(report.diagnosis_raw, encoding="utf-8")
