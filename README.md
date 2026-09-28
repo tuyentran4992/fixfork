@@ -54,7 +54,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 53 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 60 tests.
 
 ## How it uses Nebius & NVIDIA
 
