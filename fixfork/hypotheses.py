@@ -24,7 +24,7 @@ Reply with ONLY a JSON array, no prose, no markdown fences. Each element:
 {{"title": "...", "rationale": "...", "edits": [{{"file": "path/relative/to/repo", "find": "exact existing text", "replace": "replacement text"}}]}}
 
 The `find` text MUST be copied EXACTLY (character for character, whitespace
-included) from the repository files below - the edit is applied by an exact
+and blank lines included) from the repository files below - the edit is applied by an exact
 string match, so any paraphrase will fail.
 
 Edits to test files, CI workflows and build/config files are OFF-LIMITS:

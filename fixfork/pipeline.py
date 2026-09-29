@@ -33,7 +33,8 @@ edit, or reply with an empty list if you have no further idea.
 Reply with ONLY a JSON object: {{"edits": [{{"file": "...", "find": "exact existing text", "replace": "..."}}]}}
 
 The `find` text MUST be copied EXACTLY from the branch files below (the branch
-already contains the earlier edit).
+already contains the earlier edit); keep blank lines and trailing spaces as they
+are in the file.
 
 Edits to test files, CI workflows and build/config files are OFF-LIMITS and
 will be refused - fix the source code only.
@@ -231,9 +232,21 @@ def run_pipeline(
                     result.status = BranchStatus.BLOCKED
                     sink.emit("branch_blocked", id=hypothesis.id, reason=result.blocked_reason)
                     break
-                result.lines_changed += sandbox.apply_edits(sid, extra_edits)
-                exec_result = sandbox.run(sid, test_command)
-                outcome = parse_unittest_output(exec_result.output, exec_result.returncode)
+                try:
+                    result.lines_changed += sandbox.apply_edits(sid, extra_edits)
+                    exec_result = sandbox.run(sid, test_command)
+                    outcome = parse_unittest_output(exec_result.output, exec_result.returncode)
+                except SandboxError as exc:
+                    # A follow-up edit that cannot be applied must not kill a
+                    # branch that already ran and produced a measured outcome.
+                    # Measured on a real repo: two loop edits died on apply and
+                    # flipped their branch from red to error, discarding the
+                    # result of the tests that HAD run.
+                    report.notes.append(
+                        f"branch {hypothesis.id}: follow-up edit failed to apply "
+                        f"({exc}); keeping the last test outcome"
+                    )
+                    break
                 rounds += 1
             if result.status is not BranchStatus.BLOCKED:
                 result.status = BranchStatus.GREEN if outcome.ok else BranchStatus.RED

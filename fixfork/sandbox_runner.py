@@ -70,6 +70,49 @@ def _iter_text_files(root: Path):
         yield path
 
 
+def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
+    """Locate the span ``find`` covers in ``content``; ``None`` when not found.
+
+    Exact match is always tried first (byte-for-byte, mode ``"exact"``). Only
+    when that fails, a bounded fallback (mode ``"normalised"``) is tried: the
+    non-blank lines of ``find`` must equal consecutive non-blank lines of the
+    file after trailing-whitespace rstrip - blank lines inside the block and
+    trailing spaces on its lines may drift. That drift is a measured failure
+    class on a real repository: a diagnosis model dropped exactly one blank
+    line from a 299-char block and the byte-exact apply refused it. The
+    fallback is accepted ONLY when it matches a single location; zero or
+    several candidates return ``None`` so ambiguity is never resolved
+    silently.
+    """
+    pos = content.find(find)
+    if pos != -1:
+        return pos, pos + len(find), "exact"
+    find_lines = [line.rstrip() for line in find.split("\n") if line.strip()]
+    if not find_lines:
+        return None
+    lines = content.split("\n")
+    starts: list[int] = []
+    keep: list[int] = []
+    offset = 0
+    for index, line in enumerate(lines):
+        starts.append(offset)
+        if line.strip():
+            keep.append(index)
+        offset += len(line) + 1
+    span = len(find_lines)
+    matches: list[tuple[int, int]] = []
+    for window_start in range(len(keep) - span + 1):
+        window = keep[window_start : window_start + span]
+        if all(lines[target].rstrip() == want for want, target in zip(find_lines, window)):
+            matches.append((window[0], window[-1]))
+            if len(matches) > 1:
+                return None  # ambiguous: refuse, never guess
+    if len(matches) != 1:
+        return None
+    first, last = matches[0]
+    return starts[first], starts[last] + len(lines[last]), "normalised"
+
+
 class LocalSandbox:
     """Dev backend: one temp dir per branch, no isolation. For tests and demos."""
 
@@ -127,12 +170,14 @@ class LocalSandbox:
             if not target.is_file():
                 raise SandboxError(f"edit target file does not exist: {edit.file!r}")
             content = target.read_text(encoding="utf-8")
-            if edit.find not in content:
+            span = locate_edit(content, edit.find)
+            if span is None:
                 raise SandboxError(
                     f"edit target not found in {edit.file!r}: {edit.find!r}"
                 )
+            start, end, _mode = span
             target.write_text(
-                content.replace(edit.find, edit.replace, 1), encoding="utf-8"
+                content[:start] + edit.replace + content[end:], encoding="utf-8"
             )
             changed_lines += edit.find.count("\n") + 1
         return changed_lines
@@ -414,9 +459,11 @@ class NebiusSandbox:
             content = pending.get(edit.file) or tree.get(edit.file)
             if content is None:
                 raise SandboxError(f"edit target file does not exist: {edit.file!r}")
-            if edit.find not in content:
+            span = locate_edit(content, edit.find)
+            if span is None:
                 raise SandboxError(f"edit target not found in {edit.file!r}: {edit.find!r}")
-            pending[edit.file] = content.replace(edit.find, edit.replace, 1)
+            start, end, _mode = span
+            pending[edit.file] = content[:start] + edit.replace + content[end:]
             changed_lines += edit.find.count("\n") + 1
         files = {
             f"{self.REPO_DIR}/{rel}": {"uuid": self._upload_file(text.encode())}

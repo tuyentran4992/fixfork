@@ -8,7 +8,7 @@ from pathlib import Path
 from fixfork.fakes import DEMO_HYPOTHESES, FakeRouter
 from fixfork.models import BranchStatus
 from fixfork.pipeline import run_pipeline
-from fixfork.sandbox_runner import LocalSandbox
+from fixfork.sandbox_runner import LocalSandbox, SandboxError
 
 DEMO_REPO = Path(__file__).resolve().parent.parent / "examples" / "demo-repo"
 TEST_CMD = "python3 -m unittest discover -s tests"
@@ -187,6 +187,39 @@ class PipelineGuardTest(unittest.TestCase):
         self.assertEqual(report.winner_id, 1)
         self.assertEqual(report.winner_diff, "")
         self.assertIn("withheld", " ".join(report.notes))
+
+
+class LoopApplyFailureTest(unittest.TestCase):
+    def test_loop_edit_apply_failure_keeps_red_not_error(self):
+        # Measured on a real repo: a follow-up (loop) edit that cannot be
+        # applied used to flip a branch from red to error, discarding the
+        # result of the tests that HAD run. It must keep the measured outcome.
+        class LoopFailSandbox(LocalSandbox):
+            def apply_edits(self, sid, edits):
+                if any("LOOP_MARKER" in edit.find for edit in edits):
+                    raise SandboxError("simulated apply failure")
+                return super().apply_edits(sid, edits)
+
+        # DEMO_HYPOTHESES[2] ("VAT not part of the total") leaves one test
+        # failing, so the branch is red and the loop is invoked.
+        router = FakeRouter(
+            reason_reply=json.dumps([DEMO_HYPOTHESES[2]]),
+            loop_reply=json.dumps(
+                {"edits": [{"file": "src/tax.py", "find": "LOOP_MARKER", "replace": "x"}]}
+            ),
+        )
+        report = run_pipeline(
+            DEMO_REPO,
+            TEST_CMD,
+            router,
+            LoopFailSandbox(),
+            branches=1,
+            events=RecordingSink(),
+        )
+        self.assertEqual(report.branches[0].status, BranchStatus.RED)
+        self.assertTrue(
+            any("follow-up edit failed to apply" in note for note in report.notes)
+        )
 
 
 if __name__ == "__main__":

@@ -181,6 +181,25 @@ class NebiusSandboxTest(unittest.TestCase):
         with self.assertRaises(SandboxError):
             box.apply_edits("s", [Edit(file="src/tax.py", find="NOT THERE", replace="x")])
 
+    def test_apply_edits_tolerates_blank_line_drift(self):
+        # Same drift class as the local backend: one missing blank line inside
+        # the find block must still apply (unique normalised match).
+        repo_text = "def price(x):\n\n\n    return x + 1\n"
+        box, _ = self.box([
+            _spawn_resp("op-read"), _op("op-read", "state-1",
+                                        stdout=_tar_payload({"src/tax.py": repo_text})),
+            _file_resp("f-new"),
+            _spawn_resp("op-edit"), _op("op-edit", "state-2"),
+        ])
+        box._sessions["s"] = "state-1"
+        n = box.apply_edits(
+            "s",
+            [Edit(file="src/tax.py", find="def price(x):\n\n    return x + 1",
+                  replace="def price(x):\n    return x - 1")],
+        )
+        self.assertEqual(n, 3)
+        self.assertEqual(box.checkpoint("s"), "state-2")
+
     # -- checkpoint / fork / rollback ----------------------------------------
     def test_fork_and_rollback_are_pointer_moves(self):
         box, _ = self.box([])
