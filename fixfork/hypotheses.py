@@ -39,6 +39,10 @@ Failure log (tail):
 # Prompt-size guards: whole small repos fit, big ones get an explicit note.
 MAX_FILE_CHARS = 8000
 MAX_TOTAL_FILES_CHARS = 24000
+# The "(not shown: ...)" note lists at most this many entries; the rest is
+# summarized as "+N more" so the note cannot outgrow the budget it reports on.
+MAX_SKIPPED_IN_NOTE = 8
+MAX_NOTE_CHARS = 600
 
 
 def render_files(
@@ -52,19 +56,36 @@ def render_files(
     blocks: list[str] = []
     skipped: list[str] = []
     used = 0
-    for rel in sorted(files):
+    # Code first: real repositories carry CI configs, lockfiles and docs that
+    # sort before src/ and tests/, and those would otherwise eat the whole
+    # budget before the model ever sees a source file (observed on a real repo:
+    # python-humanize/humanize - the failing module never reached the prompt).
+    def _budget_rank(rel: str) -> tuple[int, str]:
+        return (0 if rel.endswith(".py") else 1, rel)
+
+    for rel in sorted(files, key=_budget_rank):
         content = files[rel]
         if len(content) > max_file_chars:
             skipped.append(f"{rel} (too large: {len(content)} chars)")
             continue
-        block = f"--- {rel} ---\n{content.rstrip()}\n"
+        # No rstrip: the prompt tells the model to copy `find` text exactly,
+        # so the shown content must match the file byte for byte.
+        block = f"--- {rel} ---\n{content}\n"
         if used + len(block) > max_total_chars:
             skipped.append(f"{rel} (over total prompt budget)")
             continue
         blocks.append(block)
         used += len(block)
     if skipped:
-        blocks.append("(not shown: " + "; ".join(skipped) + ")")
+        # The note is capped: a repo with many skipped files must not grow the
+        # prompt past the budget the note itself reports on.
+        head = "; ".join(skipped[:MAX_SKIPPED_IN_NOTE])
+        if len(skipped) > MAX_SKIPPED_IN_NOTE:
+            head += f"; +{len(skipped) - MAX_SKIPPED_IN_NOTE} more"
+        note = f"(not shown: {head})"
+        if len(note) > MAX_NOTE_CHARS:
+            note = note[: MAX_NOTE_CHARS - 4] + " ...)"
+        blocks.append(note)
     return "\n".join(blocks)
 
 
