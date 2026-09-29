@@ -70,7 +70,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 105 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 116 tests.
 4. **The diagnosis is web-grounded.** One real Tavily search per run over the
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the
