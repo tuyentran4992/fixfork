@@ -19,7 +19,7 @@ from .model_router import (
 from .pipeline import run_pipeline
 from .report import render_html, render_markdown, summary_dict
 from .research import ResearchError, TavilyResearch
-from .sandbox_runner import LocalSandbox
+from .sandbox_runner import LocalSandbox, NebiusSandbox, SandboxError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--fake",
         action="store_true",
         help="force the offline fake router (no API key needed)",
+    )
+    run.add_argument(
+        "--sandbox",
+        choices=["local", "nebius"],
+        default="local",
+        help="execution backend: local temp dirs (default) or live Token Factory "
+        "Sandboxes ('nebius'; needs NEBIUS_API_KEY + NEBIUS_SANDBOX_PROJECT). "
+        "--fake always keeps the local backend (offline runs never call the API)",
     )
     run.add_argument("--branches", type=int, default=3, help="number of hypotheses/branches")
     run.add_argument("--max-rounds", type=int, default=2, help="max test rounds per branch")
@@ -158,7 +166,19 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("research: off")
 
-    sandbox = LocalSandbox()
+    if args.sandbox == "nebius" and not args.fake:
+        try:
+            sandbox = NebiusSandbox()
+        except SandboxError as exc:
+            print(f"! {exc}")
+            return 2
+        print("sandbox: NebiusSandbox (Token Factory Sandboxes, live)")
+    else:
+        sandbox = LocalSandbox()
+        if args.sandbox == "nebius":  # explicit flag + --fake: stay offline
+            print("sandbox: LocalSandbox (--fake keeps offline runs on the local backend)")
+        else:
+            print("sandbox: LocalSandbox (local temp dirs)")
     sink = JsonlEventSink(args.events, echo=True) if args.events else NullSink()
     try:
         report = run_pipeline(

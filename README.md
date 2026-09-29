@@ -11,9 +11,10 @@ An autonomous debugging agent for the
 with NVIDIA Nemotron models: **Nemotron 3 Super 120B** for the diagnosis and
 **Nemotron 3 Nano 30B** for the cheap repair loop. Before the diagnosis call,
 the failure signature is grounded with a real **Tavily** web search. Candidate
-fixes race as forked branches through a git-style sandbox abstraction
-(`checkpoint` / `fork` / `rollback`) - the local backend ships today, and a
-**Token Factory Sandboxes** backend is the next integration.
+fixes race on forked branches through a git-style sandbox abstraction
+(`checkpoint` / `fork` / `rollback`) - a local backend is the default, and the
+**Token Factory Sandboxes** backend is wired and verified live (opt-in,
+`--sandbox nebius`).
 
 > Status: **early development.** The offline pipeline (deterministic fake
 > router + local sandbox) runs end to end, and live Token Factory model calls
@@ -30,7 +31,13 @@ fixes race as forked branches through a git-style sandbox abstraction
 > suite then reported 310 passed (three files whose dev-only dependencies are
 > absent from the sandbox excluded). The run took about 7.6 minutes and about
 > $0.026 in model calls, retries included.
-> The Token Factory Sandboxes backend is wired next.
+> **Token Factory Sandboxes backend is wired and verified live** (2026-09-29):
+> a full three-branch race ran entirely inside Nebius sandboxes - baseline red
+> inside the VM, three branches forked from one state uuid, tests executed in
+> the VMs, and the winning 1-line patch exported from the sandbox and
+> re-applied with `git apply` on a pristine checkout (tests green). The race
+> used 13 sandbox operations, measured $0.0044 in sandbox cost, and took
+> ~102 s wall-clock including the live diagnosis.
 
 ## How it works
 
@@ -43,9 +50,10 @@ fixes race as forked branches through a git-style sandbox abstraction
    and the web hints, and proposes three *divergent* root causes, each with a
    concrete edit plan.
 4. **Fork & race** - the sandbox state is forked into three branches; each
-   applies its edit and runs the test suite. (Today this runs on the local
-   temp-dir backend - no real isolation - until the Token Factory Sandboxes
-   backend lands.)
+   applies its edit and runs the test suite inside its own sandbox. (The
+   default local backend uses temp dirs - no isolation; with `--sandbox
+   nebius` each branch forks a VM-level state image on Token Factory
+   Sandboxes.)
 5. **Cheap iteration** - branches that still fail get extra rounds from
    Nemotron 3 Nano (the small, fast loop model) to stretch credits - up to two
    rounds per branch.
@@ -70,7 +78,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 116 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 119 tests.
 4. **The diagnosis is web-grounded.** One real Tavily search per run over the
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the
@@ -89,9 +97,10 @@ Instead of a single "suggested fix":
 - **Nemotron 3 Nano 30B** (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`) - the
   small, fast loop model used for extra repair rounds on branches that still
   fail, keeping the race cheap.
-- **Token Factory Sandboxes** (next integration) - the planned backend for
-  isolating the three racing branches on Nebius infrastructure; today the
-  race runs on the local sandbox backend.
+- **Token Factory Sandboxes** - the live backend for isolating the three
+  racing branches on Nebius infrastructure (opt-in: `--sandbox nebius`).
+  Checkpoint, fork and rollback are content-addressed state-image moves; a
+  full race measured 13 operations and $0.0044 in sandbox cost (2026-09-29).
 
 ## Web research (Tavily)
 
@@ -152,6 +161,20 @@ Live runs include one Tavily web search for the failure signature by default
 (keyless needs no extra key; set `TAVILY_API_KEY` to use a free-tier key, or
 pass `--research off` to skip the search).
 
+To race the branches on Token Factory Sandboxes instead of local temp dirs:
+
+```bash
+export NEBIUS_API_KEY=...            # Token Factory key
+export NEBIUS_SANDBOX_PROJECT=...    # Sandboxes project id
+python3 -m fixfork run \
+  --repo examples/demo-repo \
+  --test "python3 -m unittest discover -s tests" \
+  --sandbox nebius --out fixfork-report.md
+```
+
+`--fake` always keeps the local backend, so offline demo runs never call the
+Sandboxes API.
+
 The live router starts at `max_tokens=4096` and retries with a doubled budget
 (up to 16384) when a reasoning model spends the whole budget thinking instead
 of answering — reasoning tokens are billed as completion tokens. Tokens and
@@ -170,7 +193,7 @@ examples/demo-repo/ tiny buggy repo used by the offline demo
 | Piece | Offline (default here) | Nebius |
 |---|---|---|
 | Models | `FakeRouter` (deterministic fixtures) | wired & verified: Nemotron 3 Super 120B (diagnosis) + Nano 30B (loop) via Token Factory |
-| Sandboxes | `LocalSandbox` (temp dirs, no isolation) | Token Factory Sandboxes (fork / rollback) — wired next |
+| Sandboxes | `LocalSandbox` (temp dirs, no isolation) | wired & verified: fork / rollback on content-addressed state uuids (`--sandbox nebius`); full race: 13 ops, $0.0044 (2026-09-29) |
 | Web research | `FakeResearch` / `--research off` | Tavily Search — wired & verified (one call per run; keyless or free-tier key) |
 
 ## License
