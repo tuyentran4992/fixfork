@@ -135,6 +135,24 @@ class GenerateHypothesesTest(unittest.TestCase):
         self.assertEqual(router.calls[0][0], "reason")
         self.assertIn("--- src/tax.py ---", router.calls[0][1])
 
+    def test_refs_are_derived_from_log_and_prioritised(self):
+        # When refs are not passed explicitly, the helper derives them from the
+        # log itself - the two call paths (helper + pipeline) must not drift.
+        router = FakeRouter()
+        generate_hypotheses(
+            router,
+            "repo",
+            "pytest",
+            'File "/tmp/ff/branch-1/tests/test_items.py", line 811, in t\n',
+            n=3,
+            files={"aaa.py": "print(1)\n", "tests/test_items.py": "assert i.fold == 1\n"},
+        )
+        prompt = router.calls[0][1]
+        self.assertLess(
+            prompt.index("--- tests/test_items.py ---"),
+            prompt.index("--- aaa.py ---"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

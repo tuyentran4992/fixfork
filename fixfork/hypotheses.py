@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from .model_router import ModelReply, ModelRouter
 from .models import Edit, Hypothesis
@@ -43,29 +44,76 @@ Failure log (tail):
 # Prompt-size guards: whole small repos fit, big ones get an explicit note.
 MAX_FILE_CHARS = 8000
 MAX_TOTAL_FILES_CHARS = 24000
-# The "(not shown: ...)" note lists at most this many entries; the rest is
+# The "not shown: ..." note lists at most this many entries; the rest is
 # summarized as "+N more" so the note cannot outgrow the budget it reports on.
 MAX_SKIPPED_IN_NOTE = 8
 MAX_NOTE_CHARS = 600
+
+
+def extract_refs(log: str, files: dict[str, str] | None) -> list[str]:
+    """Repo files referenced by a failure log, in order of first mention.
+
+    Matches both traceback style (``File "/tmp/.../tests/test_items.py", line
+    811``) and the short ``pkg/mod.py:123:`` style pytest prints. The log may
+    carry sandbox-absolute paths, so a key counts as referenced when the token
+    either equals it or ends with it at a path-component boundary; tokens that
+    match no key (stdlib, site-packages) are ignored - they are not part of the
+    rendered tree.
+    """
+    if not log or not files:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _REF_RE.finditer(log):
+        token = (match.group(1) or match.group(2) or "").replace("\\", "/")
+        if token.startswith("./"):
+            token = token[2:]
+        # Longest match wins: for a token ``/tmp/x/src/utils.py`` with keys
+        # ``utils.py`` and ``src/utils.py`` in the tree, the longer key is the
+        # file the log actually means - a shorter endswith hit would be wrong.
+        candidates = [
+            key for key in files if token == key or token.endswith("/" + key)
+        ]
+        if not candidates:
+            continue
+        key = max(candidates, key=len)
+        if key not in seen:
+            seen.add(key)
+            found.append(key)
+    return found
+
+
+# Traceback ``File "..."`` frames and short ``path.py:NN:`` references.
+_REF_RE = re.compile(r'File "([^"]+)"|([A-Za-z0-9_][\w\-./]*\.py):\d+')
 
 
 def render_files(
     files: dict[str, str] | None,
     max_file_chars: int = MAX_FILE_CHARS,
     max_total_chars: int = MAX_TOTAL_FILES_CHARS,
+    refs: list[str] | None = None,
 ) -> str:
-    """Format a repo tree for the prompt, with size guards and honest notes."""
+    """Format a repo tree for the prompt, with size guards and honest notes.
+
+    ``refs`` (paths mentioned by the failure log) are rendered before anything
+    else: on a budget that cannot fit the whole tree, the files the log points
+    at must reach the model. Remaining files keep the code-before-docs order.
+    """
     if not files:
         return "(no repository files provided)"
     blocks: list[str] = []
     skipped: list[str] = []
+    refset = set(refs or ())
     used = 0
-    # Code first: real repositories carry CI configs, lockfiles and docs that
-    # sort before src/ and tests/, and those would otherwise eat the whole
-    # budget before the model ever sees a source file (observed on a real repo:
+    # Log-referenced files first, then code, then everything else: real
+    # repositories carry CI configs, lockfiles and docs that sort before src/
+    # and tests/, and those would otherwise eat the whole budget before the
+    # model ever sees a source file (observed on a real repo:
     # python-humanize/humanize - the failing module never reached the prompt).
     def _budget_rank(rel: str) -> tuple[int, str]:
-        return (0 if rel.endswith(".py") else 1, rel)
+        if rel in refset:
+            return (0, rel)
+        return (1 if rel.endswith(".py") else 2, rel)
 
     for rel in sorted(files, key=_budget_rank):
         content = files[rel]
@@ -100,13 +148,21 @@ def build_prompt(
     n: int = 3,
     files: dict[str, str] | None = None,
     research_block: str = "",
+    refs: list[str] | None = None,
+    max_file_chars: int = MAX_FILE_CHARS,
+    max_total_chars: int = MAX_TOTAL_FILES_CHARS,
 ) -> str:
     prompt = PROMPT_TEMPLATE.format(
         n=n,
         repo=repo,
         test_command=test_command,
         log=log,
-        files=render_files(files),
+        files=render_files(
+            files,
+            max_file_chars=max_file_chars,
+            max_total_chars=max_total_chars,
+            refs=refs,
+        ),
     )
     if research_block:
         prompt += "\n" + research_block.rstrip() + "\n"
@@ -215,8 +271,12 @@ def generate_hypotheses(
     log: str,
     n: int = 3,
     files: dict[str, str] | None = None,
+    refs: list[str] | None = None,
 ) -> tuple[list[Hypothesis], ModelReply]:
+    if refs is None:
+        # Same priority rule as the pipeline: files the log points at first.
+        refs = extract_refs(log, files)
     reply: ModelReply = router.complete(
-        "reason", build_prompt(repo, test_command, log, n=n, files=files)
+        "reason", build_prompt(repo, test_command, log, n=n, files=files, refs=refs)
     )
     return parse_hypotheses(reply.text, n=n), reply

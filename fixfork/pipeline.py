@@ -8,8 +8,11 @@ from pathlib import Path
 from . import guard
 from .events import EventSink, NullSink
 from .hypotheses import (
+    MAX_FILE_CHARS,
+    MAX_TOTAL_FILES_CHARS,
     HypothesisError,
     build_prompt,
+    extract_refs,
     parse_edit_object,
     parse_hypotheses,
     render_files,
@@ -77,6 +80,8 @@ def run_pipeline(
     log_tail: int = 2000,
     events: EventSink | None = None,
     research: ResearchClient | None = None,
+    max_file_chars: int = MAX_FILE_CHARS,
+    max_total_chars: int = MAX_TOTAL_FILES_CHARS,
 ) -> RunReport:
     sink: EventSink = events if events is not None else NullSink()
     repo_path = Path(repo)
@@ -94,6 +99,8 @@ def run_pipeline(
     base_files = sandbox.read_tree(baseline_sid)
     base_snapshot = sandbox.checkpoint(baseline_sid)
     log = baseline_exec.output[-log_tail:] if baseline_exec.output else "(no output)"
+    # Files the failure log points at get prompt priority (see render_files).
+    refs = extract_refs(log, base_files)
 
     research_block = ""
     if research is not None:
@@ -129,6 +136,9 @@ def run_pipeline(
                 n=branches,
                 files=base_files,
                 research_block=research_block,
+                refs=refs,
+                max_file_chars=max_file_chars,
+                max_total_chars=max_total_chars,
             ),
         )
     except RouterError as exc:
@@ -191,14 +201,21 @@ def run_pipeline(
             outcome = parse_unittest_output(exec_result.output, exec_result.returncode)
             rounds = 1
             while not outcome.ok and rounds < max_rounds:
+                branch_files = sandbox.read_tree(sid)
+                branch_log = exec_result.output[-log_tail:] if exec_result.output else ""
                 try:
                     loop_reply = router.complete(
                         "loop",
                         LOOP_PROMPT_TEMPLATE.format(
                             title=hypothesis.title,
                             test_command=test_command,
-                            files=render_files(sandbox.read_tree(sid)),
-                            log=exec_result.output[-log_tail:],
+                            files=render_files(
+                                branch_files,
+                                max_file_chars=max_file_chars,
+                                max_total_chars=max_total_chars,
+                                refs=extract_refs(branch_log, branch_files),
+                            ),
+                            log=branch_log or "(no output)",
                         ),
                     )
                     extra_edits = _parse_loop_edits(loop_reply.text)

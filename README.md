@@ -48,7 +48,10 @@ fixes race on forked branches through a git-style sandbox abstraction
    continues and the report records an honest note.
 3. **Three hypotheses** - Nemotron 3 Super reads the code, the failure log
    and the web hints, and proposes three *divergent* root causes, each with a
-   concrete edit plan.
+   concrete edit plan. Files the failure log points at are rendered first in
+   the prompt, and the prompt size caps are adjustable (`--max-file-chars`,
+   `--max-total-chars`) for repositories whose failing module outweighs the
+   default budget.
 4. **Fork & race** - the sandbox state is forked into three branches; each
    applies its edit and runs the test suite inside its own sandbox. (The
    default local backend uses temp dirs - no isolation; with `--sandbox
@@ -79,7 +82,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 137 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 147 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be

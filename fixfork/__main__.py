@@ -10,6 +10,7 @@ from pathlib import Path
 from . import __version__
 from .events import JsonlEventSink, NullSink
 from .fakes import FakeRouter
+from .hypotheses import MAX_FILE_CHARS, MAX_TOTAL_FILES_CHARS
 from .model_router import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MAX_TOKENS_CAP,
@@ -102,6 +103,21 @@ def build_parser() -> argparse.ArgumentParser:
         dest="max_tokens_cap",
         help="hard cap for the retry ladder (default measured on a real repo)",
     )
+    run.add_argument(
+        "--max-file-chars",
+        type=int,
+        default=MAX_FILE_CHARS,
+        dest="max_file_chars",
+        help="per-file character cap for the prompt; larger files are listed "
+        "as 'not shown' (raise it for repos whose failing module is big)",
+    )
+    run.add_argument(
+        "--max-total-chars",
+        type=int,
+        default=MAX_TOTAL_FILES_CHARS,
+        dest="max_total_chars",
+        help="total character budget for the repository files in the prompt",
+    )
 
     research = sub.add_parser(
         "research",
@@ -190,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
             max_rounds=args.max_rounds,
             events=sink,
             research=research_client,
+            max_file_chars=args.max_file_chars,
+            max_total_chars=args.max_total_chars,
         )
     finally:
         if isinstance(sink, JsonlEventSink):
