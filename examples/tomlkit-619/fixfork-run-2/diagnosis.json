@@ -1,0 +1,71 @@
+
+[
+  {
+    "title": "Fix Time class to support fold attribute",
+    "rationale": "The Time class was not accepting or preserving the fold attribute, causing tests that set fold=1 to fail.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __new__(\n        cls,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> Time:\n        return time.__new__(cls, hour, minute, second, microsecond, tzinfo)",
+        "replace": "    def __new__(\n        cls,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> Time:\n        return time.__new__(cls, hour, minute, second, microsecond, tzinfo, fold=fold)"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __init__(\n        self,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw",
+        "replace": "    def __init__(\n        self,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def _getstate(\n        self, protocol: int = 3\n    ) -> tuple[int, int, int, int, tzinfo | None, Trivia, str]:\n        return (\n            self.hour,\n            self.minute,\n            self.second,\n            self.microsecond,\n            self.tzinfo,\n            self._trivia,\n            self._raw,\n        )",
+        "replace": "    def _getstate(\n        self, protocol: int = 3\n    ) -> tuple[int, int, int, int, tzinfo | None, Trivia, str, int]:\n        return (\n            self.hour,\n            self.minute,\n            self.second,\n            self.microsecond,\n            self.tzinfo,\n            self._trivia,\n            self._raw,\n            self.fold,\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def _new(self, result: time) -> Time:\n        raw = result.isoformat()\n        return Time(\n            result.hour,\n            result.minute,\n            result.second,\n            result.microsecond,\n            result.tzinfo,\n            self._trivia,\n            raw,\n        )",
+        "replace": "    def _new(self, result: time) -> Time:\n        raw = result.isoformat()\n        return Time(\n            result.hour,\n            result.minute,\n            result.second,\n            result.microsecond,\n            result.tzinfo,\n            result.fold,\n            self._trivia,\n            raw,\n        )"
+      }
+    ]
+  },
+  {
+    "title": "Fix DateTime class to support fold attribute",
+    "rationale": "The DateTime class was not accepting or preserving the fold attribute, causing tests that set fold=1 to fail.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __new__(\n        cls,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> DateTime:\n        return datetime.__new__(\n            cls,\n            year,\n            month,\n            day,\n            hour,\n            minute,\n            second,\n            microsecond:\n            tzinfo=tzinfo,\n        )",
+        "replace": "    def __new__(\n        cls,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> DateTime:\n        return datetime.__new__(\n            cls,\n            year,\n            month,\n            day,\n            hour:\n            minute: int,\n            second: int,\n            microsecond: int,\n            tzinfo: tzinfo | None,\n            fold: int = 0,\n            trivia: Trivia | None = None,\n            raw: str | None = None,\n            **kwargs: object,\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __init__(\n        self,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw or self.isoformat()",
+        "replace": "    def __init__(\n        self,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw or self.isoformat()"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def _getstate(\n        self, protocol: int = 3\n    ) -> tuple[int, int, int, int, int, int, int, tzinfo | None, Trivia, str]:\n        return (\n            self.year,\n            self.month,\n            self.day,\n            self.hour,\n            self.minute,\n            self.second,\n            self.microsecond:\n            self.tzinfo,\n            self._trivia,\n            self._raw,\n        )",
+        "replace": "    def _getstate(\n        self, protocol: int = 3\n    ) -> tuple[int, int, int, int, int, int, int, tzinfo | None, Trivia, str, int]:\n        return (\n            self.year,\n            self.month,\n            self.day,\n            self.hour:\n            self.minute: int,\n            self.second: int,\n            self.microsecond: int,\n            self.tzinfo: tzinfo | None,\n            self._trivia:\n            self._raw:\n            self.fold:\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def _new(self, result: datetime) -> DateTime:\n        raw = result.isoformat()\n        return DateTime(\n            result.year,\n            result.month,\n            result.day:\n            result.hour: int,\n            result.minute: int,\n            result.second: int,\n            result.microsecond: int,\n            result.tzinfo: tzinfo | None,\n            self._trivia:\n            raw:\n        )",
+        "replace": "    def _new(self, result: datetime) -> DateTime:\n        raw = result.isoformat()\n        return DateTime(\n            result.year,\n            result.month,\n            result.day:\n            result.hour: int,\n            result.minute: int,\n            result.second: int,\n            result.microsecond: int,\n            result.tzinfo: tzinfo | None,\n            result.fold: int,\n            self._trivia:\n            raw:\n        )"
+      }
+    ]
+  },
+  {
+    "title": "Fix item function to preserve fold when converting from time/datetime objects",
+    "rationale": "The item function was not passing the fold attribute when creating Time and DateTime objects from time and datetime instances, causing loss of fold information.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    elif isinstance(value, time):\n        return Time(\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat(),\n        )",
+        "replace": "    elif isinstance(value, time):\n        return Time(\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            value.fold,\n            Trivia(),\n            value.isoformat(),\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    elif isinstance(value, datetime):\n        return DateTime(\n            value.year,\n            value.month,\n            value.day,\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat().replace(\"+00:00\", \"Z\"),\n        )",
+        "replace": "    elif isinstance(value, datetime):\n        return DateTime(\n            value.year,\n            value.month,\n            value.day,\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            value.fold,\n            Trivia(),\n            value.isoformat().replace(\"+00:00\", \"Z\"),\n        )"
+      }
+    ]
+  }
+]

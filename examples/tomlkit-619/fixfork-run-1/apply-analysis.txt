@@ -1,0 +1,12 @@
+=== hypothesis 1: Time class missing fold parameter in constructor
+  edit 1: exact-match=True  (find 299 chars)
+  edit 2: exact-match=False  (find 294 chars)
+    anchor ok up to 271 chars; first divergence:
+    FIND-next : '        self._raw = raw'
+    FILE-next : '\n        self._raw = raw\n\n    def unwrap(self) -> time:\n        (hour, minute, second, microsecond, tzinfo, _, _) = self'
+=== hypothesis 2: DateTime class missing fold parameter in constructor
+  edit 1: exact-match=True  (find 543 chars)
+  edit 2: exact-match=True  (find 407 chars)
+=== hypothesis 3: item function not passing fold attribute for time and dateti
+  edit 1: exact-match=True  (find 250 chars)
+  edit 2: exact-match=True  (find 353 chars)

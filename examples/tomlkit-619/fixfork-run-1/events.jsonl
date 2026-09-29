@@ -1,0 +1,14 @@
+{"t": 0.0, "event": "run_start", "repo": "/tmp/ngoai/tomlkit-exp", "test_command": "sh /tmp/ngoai/tomlkit-test-cach-ly.sh", "branches": 3}
+{"t": 2.365, "event": "baseline_done", "ok": false, "summary": "FAILED (2 of 94)"}
+{"t": 4.838, "event": "research_done", "query": "AssertionError sh /tmp/ngoai/tomlkit-test-cach-ly.sh", "n_sources": 5, "sources": ["https://discourse.julialang.org/t/toml-parsing-error/116891", "https://tomlkit.readthedocs.io", "https://discuss.streamlit.io/t/how-to-solve-this-toml-decoder-tomldecodeerror/39982"]}
+{"t": 43.718, "event": "hypotheses_ready", "n": 3, "titles": ["Time class missing fold parameter in constructor", "DateTime class missing fold parameter in constructor", "item function not passing fold attribute for time and datetime"], "tokens": 92789, "cost": 0.033825}
+{"t": 43.718, "event": "branch_started", "id": 1, "title": "Time class missing fold parameter in constructor"}
+{"t": 43.921, "event": "branch_done", "id": 1, "status": "error", "summary": "", "tests_ok": false, "lines_changed": 0, "tokens": 0, "cost": 0.0, "rounds": 0}
+{"t": 43.921, "event": "branch_started", "id": 2, "title": "DateTime class missing fold parameter in constructor"}
+{"t": 64.556, "event": "branch_done", "id": 2, "status": "error", "summary": "", "tests_ok": false, "lines_changed": 42, "tokens": 84192, "cost": 0.005408, "rounds": 0}
+{"t": 64.556, "event": "branch_started", "id": 3, "title": "item function not passing fold attribute for time and datetime"}
+{"t": 158.42, "event": "branch_done", "id": 3, "status": "error", "summary": "", "tests_ok": false, "lines_changed": 23, "tokens": 94910, "cost": 0.007973, "rounds": 0}
+{"t": 158.421, "event": "winner", "id": 1, "reason": "no branch went green; branch 1 failed least () - treat its edits as a lead, not a fix"}
+{"t": 158.875, "event": "rollback", "id": 2}
+{"t": 159.284, "event": "rollback", "id": 3}
+{"t": 159.284, "event": "done", "total_tokens": 271891, "cost": 0.047207}

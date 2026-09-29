@@ -1,0 +1,29 @@
+router: NebiusRouter (Token Factory)
+research: Tavily web search (api key from env)
+sandbox: LocalSandbox (local temp dirs)
+baseline: FAILED (2 of 94)
+web research: 5 source(s) for "AssertionError sh /tmp/ngoai/tomlkit-test-cach-ly.sh"
+diagnosis: 3 hypotheses (100066 tokens, $0.0404)
+fork branch 1: Fix Time class to support fold attribute
+branch 1: red | FAILED (7 of 94) | 46 line(s) changed
+fork branch 2: Fix DateTime class to support fold attribute
+branch 2: error |  | 0 line(s) changed
+fork branch 3: Fix item function to preserve fold when converting from time/datetime objects
+branch 3: red | FAILED (5 of 94) | 75 line(s) changed
+winner: branch 3 — no branch went green; branch 3 failed least (FAILED (5 of 94)) - treat its edits as a lead, not a fix
+rollback branch 1 (fork discarded)
+rollback branch 2 (fork discarded)
+done: 357723 tokens, ~$0.0578
+patch: none written (no winning diff this run)
+html -> /tmp/ngoai/run-tomlkit-2/fixfork-tomlkit.html
+raw diagnosis -> /tmp/ngoai/run-tomlkit-2/fixfork-tomlkit.md.diagnosis.json
+baseline: FAILED (2 of 94)
+research: 5 source(s) for "AssertionError sh /tmp/ngoai/tomlkit-test-cach-ly.sh"
+  branch 1: red | FAILED (7 of 94) | 46 line(s) changed
+  branch 2: error |  | 0 line(s) changed
+  branch 3: red | FAILED (5 of 94) | 75 line(s) changed
+winner: 3 - no branch went green; branch 3 failed least (FAILED (5 of 94)) - treat its edits as a lead, not a fix
+tokens: 357723 (100066 diagnosis) | cost ~ $0.0578
+router spend: $0.0974 incl. retry attempts (all responses with usage)
+report -> /tmp/ngoai/run-tomlkit-2/fixfork-tomlkit.md
+EXIT=0

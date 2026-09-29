@@ -1,0 +1,14 @@
+{"t": 0.0, "event": "run_start", "repo": "/tmp/ngoai/tomlkit-exp", "test_command": "sh /tmp/ngoai/tomlkit-test-cach-ly.sh", "branches": 3}
+{"t": 2.264, "event": "baseline_done", "ok": false, "summary": "FAILED (2 of 94)"}
+{"t": 5.252, "event": "research_done", "query": "AssertionError sh /tmp/ngoai/tomlkit-test-cach-ly.sh", "n_sources": 5, "sources": ["https://tomlkit.readthedocs.io", "https://discuss.streamlit.io/t/how-to-solve-this-toml-decoder-tomldecodeerror/39982", "https://rocketreach.co/tmp-worldwide-profile_b5c61ee1f42e0c48"]}
+{"t": 139.649, "event": "hypotheses_ready", "n": 3, "titles": ["Fix Time class to support fold attribute", "Fix DateTime class to support fold attribute", "Fix item function to preserve fold when converting from time/datetime objects"], "tokens": 100066, "cost": 0.040376}
+{"t": 139.649, "event": "branch_started", "id": 1, "title": "Fix Time class to support fold attribute"}
+{"t": 152.348, "event": "branch_done", "id": 1, "status": "red", "summary": "FAILED (7 of 94)", "tests_ok": false, "lines_changed": 46, "tokens": 83578, "cost": 0.005241, "rounds": 1}
+{"t": 152.348, "event": "branch_started", "id": 2, "title": "Fix DateTime class to support fold attribute"}
+{"t": 152.545, "event": "branch_done", "id": 2, "status": "error", "summary": "", "tests_ok": false, "lines_changed": 0, "tokens": 0, "cost": 0.0, "rounds": 0}
+{"t": 152.545, "event": "branch_started", "id": 3, "title": "Fix item function to preserve fold when converting from time/datetime objects"}
+{"t": 209.269, "event": "branch_done", "id": 3, "status": "red", "summary": "FAILED (5 of 94)", "tests_ok": false, "lines_changed": 75, "tokens": 174079, "cost": 0.012151, "rounds": 3}
+{"t": 209.269, "event": "winner", "id": 3, "reason": "no branch went green; branch 3 failed least (FAILED (5 of 94)) - treat its edits as a lead, not a fix"}
+{"t": 209.601, "event": "rollback", "id": 1}
+{"t": 209.929, "event": "rollback", "id": 2}
+{"t": 209.929, "event": "done", "total_tokens": 357723, "cost": 0.057768}

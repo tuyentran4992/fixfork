@@ -1,0 +1,51 @@
+
+[
+  {
+    "title": "Time class missing fold parameter in constructor",
+    "rationale": "The Time class constructor does not accept the fold parameter, so when creating a Time item from a time object with fold=1, the fold is not passed to the underlying time object, resulting in fold=0.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __new__(\n        cls,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> Time:\n        return time.__new__(cls, hour, minute, second, microsecond, tzinfo)",
+        "replace": "    def __new__(\n        cls,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> Time:\n        return time.__new__(cls, hour, minute, second, microsecond, tzinfo, fold)"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __init__(\n        self,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw",
+        "replace": "    def __init__(\n        self,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw"
+      }
+    ]
+  },
+  {
+    "title": "DateTime class missing fold parameter in constructor",
+    "rationale": "The DateTime class constructor does not accept the fold parameter, so when creating a DateTime item from a datetime object with fold=1, the fold is not passed to the underlying datetime object, resulting in fold=0.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __new__(\n        cls,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> DateTime:\n        return datetime.__new__(\n            cls,\n            year,\n            month,\n            day,\n            hour,\n            minute,\n            second,\n            microsecond,\n            tzinfo=tzinfo,\n        )",
+        "replace": "    def __new__(\n        cls,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> DateTime:\n        return datetime.__new__(\n            cls,\n            year,\n            month,\n            day,\n            hour,\n            minute,\n            second,\n            microsecond,\n            tzinfo=tzinfo,\n            fold=fold,\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __init__(\n        self,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> None:\n        super().__init__(trivia or Trivia())\n\n        self._raw = raw or self.isoformat()",
+        "replace": "    def __init__(\n        self,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        fold: int = 0,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> None:\n        super().__init__(trivia or Trivia())\n\n        self._raw = raw or self.isoformat()"
+      }
+    ]
+  },
+  {
+    "title": "item function not passing fold attribute for time and datetime",
+    "rationale": "The item function does not extract and pass the fold attribute from the input time or datetime object when creating Time or DateTime items, causing the fold to be lost.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    elif isinstance(value, time):\n        return Time(\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat(),\n        )",
+        "replace": "    elif isinstance(value, time):\n        return Time(\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            value.fold,\n            Trivia(),\n            value.isoformat(),\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    elif isinstance(value, datetime):\n        return DateTime(\n            value.year,\n            value.month,\n            value.day,\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat().replace(\"+00:00\", \"Z\"),\n        )",
+        "replace": "    elif isinstance(value, datetime):\n        return DateTime(\n            value.year,\n            value.month,\n            value.day,\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            value.fold,\n            Trivia(),\n            value.isoformat().replace(\"+00:00\", \"Z\"),\n        )"
+      }
+    ]
+  }
+]
