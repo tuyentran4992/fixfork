@@ -85,6 +85,15 @@ class ProtectedReasonTest(unittest.TestCase):
         )
         self.assertEqual(diff_violations(diff), ["tests/test_tax.py"])
 
+    def test_diff_violations_handles_quoted_paths(self):
+        # Git C-quotes paths with spaces; quoting can differ per side.
+        same = (
+            'diff --git "a/tests/test with space.py" "b/tests/test with space.py"\n'
+        )
+        self.assertEqual(diff_violations(same), ["tests/test with space.py"])
+        mixed = 'diff --git a/src/x.py "b/tests/quoted target.py"\n'
+        self.assertEqual(diff_violations(mixed), ["tests/quoted target.py"])
+
     def test_clean_diff_has_no_violations(self):
         diff = (
             "diff --git a/src/tax.py b/src/tax.py\n"

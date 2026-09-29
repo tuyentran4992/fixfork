@@ -77,19 +77,59 @@ def describe_violations(violations: list[tuple[str, str]]) -> str:
     return "; ".join(f"{path} ({reason})" for path, reason in violations)
 
 
+_HDR_TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|(\S+)')
+
+_GIT_UNESCAPE = {"n": "\n", "t": "\t", '"': '"', "\\": "\\"}
+
+
+def _git_unquote(token: str) -> str:
+    """Undo git's C-style quoting for one path token (``core.quotePath``)."""
+    return re.sub(
+        r"\\(.)", lambda m: _GIT_UNESCAPE.get(m.group(1), m.group(1)), token
+    )
+
+
+def _header_paths(line: str) -> tuple[str, str] | None:
+    """The two repo paths in a ``diff --git`` header, quoted or not.
+
+    Git writes ``diff --git a/x b/x``; a path with spaces or other unusual
+    characters is C-quoted instead (``diff --git "a/x y" "b/x y"``), and the
+    quoting can differ per side. Tokenizing covers both forms; a naive
+    ``a/(...) b/(...)`` regex silently drops quoted headers, which would let a
+    protected change slip past this last-resort check.
+    """
+    if not line.startswith("diff --git "):
+        return None
+    got: list[str] = []
+    for match in _HDR_TOKEN.finditer(line[len("diff --git "):]):
+        token = match.group(1)
+        if token is not None:
+            token = _git_unquote(token)
+        else:
+            token = match.group(2)
+        for prefix in ("a/", "b/"):
+            if token.startswith(prefix):
+                token = token[len(prefix):]
+                break
+        got.append(token)
+        if len(got) == 2:
+            return got[0], got[1]
+    return None
+
+
 def diff_violations(diff: str) -> list[str]:
     """Protected file paths touched by a unified diff (defense in depth).
 
     The pipeline refuses protected edits before they are applied, so a clean
     ``build_patch`` output should contain no protected path at all; if one
     appears anyway, the caller must withhold the patch rather than export it.
-    Both sides of each file header are checked, so deletions and renames of a
-    protected file cannot slip through as their non-protected target name.
+    Both sides of each file header are checked - including C-quoted headers
+    for paths with spaces - so deletions and renames of a protected file
+    cannot slip through as their non-protected counterpart.
     """
     touched: set[str] = set()
     for line in diff.splitlines():
-        match = re.match(r"diff --git a/(.+?) b/(.+)$", line)
-        if match:
-            touched.add(match.group(1))
-            touched.add(match.group(2))
+        paths = _header_paths(line)
+        if paths:
+            touched.update(paths)
     return sorted(path for path in touched if protected_reason(path))
