@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from .models import BranchResult, BranchStatus
 
+# Lower rank = better; first sort key. A blocked branch (one whose edits hit
+# the referee) ranks below everything - it is not a fix and must never be
+# surfaced as a "lead" either.
+_STATUS_RANK = {
+    BranchStatus.GREEN: 0,
+    BranchStatus.RED: 1,
+    BranchStatus.ERROR: 2,
+    BranchStatus.BLOCKED: 3,
+    BranchStatus.PENDING: 4,
+}
+# Unknown future statuses fall back to the worst rank on purpose: an
+# unrecognized state must never be treated as a winner or a lead.
+
 
 def rank_key(branch: BranchResult) -> tuple:
-    """Sort key (ascending = better): green first, then fewest failures,
-    then smallest diff, then lowest hypothesis id (deterministic ties)."""
+    """Sort key (ascending = better): passing first, then fewest failures,
+    then smallest diff, then lowest hypothesis id (deterministic ties).
+    Blocked branches always lose, even to plain failures."""
     return (
-        0 if branch.status is BranchStatus.GREEN else 1,
+        _STATUS_RANK.get(branch.status, 9),
         branch.outcome.failed,
         branch.lines_changed,
         branch.hypothesis_id,
@@ -28,6 +42,13 @@ def pick_winner(branches: list[BranchResult]) -> tuple[int | None, str]:
         reason = (
             f"branch {best.hypothesis_id} passed the tests ({best.outcome.summary}) "
             f"with {best.lines_changed} line(s) changed"
+        )
+    elif best.status is BranchStatus.BLOCKED:
+        n_blocked = sum(1 for b in branches if b.status is BranchStatus.BLOCKED)
+        return None, (
+            f"no branch produced a valid fix: {n_blocked} branch(es) were blocked "
+            "for editing test/CI files (the test suite is the referee and is "
+            "off-limits)"
         )
     else:
         reason = (

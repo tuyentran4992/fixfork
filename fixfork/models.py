@@ -15,6 +15,7 @@ class BranchStatus(str, Enum):
     GREEN = "green"
     RED = "red"
     ERROR = "error"
+    BLOCKED = "blocked"  # refused: tried to edit the referee (tests/CI/config)
 
 
 @dataclass
@@ -54,6 +55,7 @@ class BranchResult:
     cost_usd: float = 0.0
     rounds: int = 0
     log_tail: str = ""
+    blocked_reason: str = ""  # set when status is BLOCKED (guard refusal)
 
 
 @dataclass

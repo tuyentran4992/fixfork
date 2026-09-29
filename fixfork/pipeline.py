@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import guard
 from .events import EventSink, NullSink
 from .hypotheses import (
     HypothesisError,
@@ -30,6 +31,9 @@ Reply with ONLY a JSON object: {{"edits": [{{"file": "...", "find": "exact exist
 
 The `find` text MUST be copied EXACTLY from the branch files below (the branch
 already contains the earlier edit).
+
+Edits to test files, CI workflows and build/config files are OFF-LIMITS and
+will be refused - fix the source code only.
 
 Applied the branch hypothesis: {title}
 Test command: {test_command}
@@ -153,10 +157,34 @@ def run_pipeline(
         cost=round(reply.cost_usd, 6),
     )
 
+    forked_ids: set[int] = set()
     for hypothesis in hypotheses:
-        sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
         sink.emit("branch_started", id=hypothesis.id, title=hypothesis.title)
         result = BranchResult(hypothesis_id=hypothesis.id)
+        # The test suite is the referee: a branch whose edits touch test, CI or
+        # build/config files is refused BEFORE any sandbox work - it is never
+        # forked, never green, and never suggested as a lead.
+        violations = guard.check_edits(hypothesis.edits)
+        if violations:
+            result.status = BranchStatus.BLOCKED
+            result.blocked_reason = guard.describe_violations(violations)
+            result.log_tail = f"blocked before any sandbox op: {result.blocked_reason}"
+            report.branches.append(result)
+            sink.emit("branch_blocked", id=hypothesis.id, reason=result.blocked_reason)
+            sink.emit(
+                "branch_done",
+                id=hypothesis.id,
+                status=result.status.value,
+                summary=result.blocked_reason,
+                tests_ok=False,
+                lines_changed=0,
+                tokens=0,
+                cost=0.0,
+                rounds=0,
+            )
+            continue
+        sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
+        forked_ids.add(hypothesis.id)
         try:
             result.lines_changed = sandbox.apply_edits(sid, hypothesis.edits)
             exec_result = sandbox.run(sid, test_command)
@@ -180,11 +208,18 @@ def run_pipeline(
                 result.cost_usd += loop_reply.cost_usd
                 if not extra_edits:
                     break
+                loop_violations = guard.check_edits(extra_edits)
+                if loop_violations:
+                    result.blocked_reason = guard.describe_violations(loop_violations)
+                    result.status = BranchStatus.BLOCKED
+                    sink.emit("branch_blocked", id=hypothesis.id, reason=result.blocked_reason)
+                    break
                 result.lines_changed += sandbox.apply_edits(sid, extra_edits)
                 exec_result = sandbox.run(sid, test_command)
                 outcome = parse_unittest_output(exec_result.output, exec_result.returncode)
                 rounds += 1
-            result.status = BranchStatus.GREEN if outcome.ok else BranchStatus.RED
+            if result.status is not BranchStatus.BLOCKED:
+                result.status = BranchStatus.GREEN if outcome.ok else BranchStatus.RED
             result.outcome = outcome
             result.rounds = rounds
             result.log_tail = exec_result.output[-log_tail:]
@@ -196,7 +231,11 @@ def run_pipeline(
             "branch_done",
             id=hypothesis.id,
             status=result.status.value,
-            summary=result.outcome.summary,
+            summary=(
+                result.blocked_reason
+                if result.status is BranchStatus.BLOCKED
+                else result.outcome.summary
+            ),
             tests_ok=result.outcome.ok,
             lines_changed=result.lines_changed,
             tokens=result.tokens_used,
@@ -212,11 +251,24 @@ def run_pipeline(
     if winner_id is not None:
         winner_sid = f"branch-{winner_id}"
         for branch in report.branches:
-            if branch.hypothesis_id != winner_id:
+            # only branches that were actually forked have a state to roll back
+            if branch.hypothesis_id != winner_id and branch.hypothesis_id in forked_ids:
                 sandbox.rollback(f"branch-{branch.hypothesis_id}", base_snapshot)
                 sink.emit("rollback", id=branch.hypothesis_id)
         if any(b.status is BranchStatus.GREEN for b in report.branches if b.hypothesis_id == winner_id):
-            report.winner_diff = build_patch(base_files, sandbox.read_tree(winner_sid))
+            candidate = build_patch(base_files, sandbox.read_tree(winner_sid))
+            # Defense in depth: pre-flight refusals make this unreachable on a
+            # correct path; if a protected path still shows up anyway, withhold
+            # the patch rather than export an edit to the referee.
+            leaked = guard.diff_violations(candidate)
+            if leaked:
+                report.notes.append(
+                    "winning patch withheld: it touches protected files ("
+                    + ", ".join(leaked)
+                    + ")"
+                )
+            else:
+                report.winner_diff = candidate
 
     sink.emit("done", total_tokens=report.total_tokens, cost=round(report.total_cost_usd, 6))
     return report

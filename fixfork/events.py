@@ -53,6 +53,8 @@ def human_line(kind: str, data: dict) -> str | None:
         return f"diagnosis: {n} hypotheses ({tok} tokens, ${cost:.4f})"
     if kind == "branch_started":
         return f"fork branch {data.get('id')}: {data.get('title', '')}"
+    if kind == "branch_blocked":
+        return f"branch {data.get('id')}: BLOCKED - {data.get('reason', '')}"
     if kind == "branch_done":
         return (
             f"branch {data.get('id')}: {data.get('status')} | "

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 
-from .models import RunReport
+from .models import BranchStatus, RunReport
 
 
 def summary_dict(report: RunReport) -> dict:
@@ -27,6 +27,7 @@ def summary_dict(report: RunReport) -> dict:
                 "tokens_used": b.tokens_used,
                 "cost_usd": round(b.cost_usd, 6),
                 "rounds": b.rounds,
+                "blocked_reason": b.blocked_reason,
             }
             for b in report.branches
         ],
@@ -59,9 +60,14 @@ def render_markdown(report: RunReport) -> str:
         "|---|---|---|---|---|---|",
     ]
     for branch in report.branches:
+        tests_cell = (
+            branch.blocked_reason
+            if branch.status is BranchStatus.BLOCKED
+            else branch.outcome.summary
+        )
         lines.append(
             f"| {branch.hypothesis_id} | {branch.status.value} | "
-            f"{branch.outcome.summary} | {branch.lines_changed} | {branch.tokens_used} | "
+            f"{tests_cell} | {branch.lines_changed} | {branch.tokens_used} | "
             f"{branch.cost_usd:.5f} |"
         )
     lines += [
@@ -116,6 +122,7 @@ th { background: rgba(127,127,127,.12); }
 .badge.green { background: #d7f5dd; color: #0b5e21; }
 .badge.red { background: #fbdede; color: #8c1a1a; }
 .badge.error { background: #ffe9c7; color: #7a4a00; }
+.badge.blocked { background: #e6dcff; color: #4b2d8f; }
 .badge.pending { background: #e8e8e8; color: #444; }
 .verdict { background: rgba(59,108,255,.08); border-left: 4px solid #3b6cff;
            padding: .75rem 1rem; margin: 1rem 0; }
@@ -146,11 +153,16 @@ def render_html(report: RunReport) -> str:
     if report.branches:
         rows = []
         for b in report.branches:
+            tests_cell = (
+                b.blocked_reason
+                if b.status is BranchStatus.BLOCKED
+                else b.outcome.summary
+            )
             rows.append(
                 "<tr>"
                 f"<td>{b.hypothesis_id}</td>"
                 f'<td><span class="badge {esc(b.status.value)}">{esc(b.status.value)}</span></td>'
-                f"<td>{esc(b.outcome.summary)}</td>"
+                f"<td>{esc(tests_cell)}</td>"
                 f"<td>{b.lines_changed}</td>"
                 f"<td>{b.tokens_used}</td>"
                 f"<td>${b.cost_usd:.5f}</td>"

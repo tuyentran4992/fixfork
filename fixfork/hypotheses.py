@@ -26,6 +26,10 @@ The `find` text MUST be copied EXACTLY (character for character, whitespace
 included) from the repository files below - the edit is applied by an exact
 string match, so any paraphrase will fail.
 
+Edits to test files, CI workflows and build/config files are OFF-LIMITS:
+FixFork refuses any branch that touches them - the test suite is the referee.
+Fix the source code only.
+
 Repository: {repo}
 Failing test command: {test_command}
 

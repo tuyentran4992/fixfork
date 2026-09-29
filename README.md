@@ -60,7 +60,8 @@ fixes race on forked branches through a git-style sandbox abstraction
 6. **Evidence-based verdict** - score = tests green, then fewest lines changed.
    The winning branch wins; losers are rolled back. If no branch goes green,
    no patch is exported: the report names the least-failed branch as a lead,
-   not a fix.
+   not a fix. A branch that proposes edits to test/CI/config files is refused
+   before it runs (`blocked`) - the test suite is the referee.
 7. **Output** - three artifacts per run: the race report (markdown, plus
    `--html` for a self-contained page), a **git-applyable patch** of the
    winning fix (`git apply fixfork-report.patch`), and the raw model reply
@@ -78,8 +79,14 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 119 tests.
-4. **The diagnosis is web-grounded.** One real Tavily search per run over the
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 132 tests.
+4. **The referee is protected.** Every proposed edit is checked before any
+   sandbox work: edits to test files, CI workflows or build/config files are
+   refused, the branch is marked `blocked`, and it can never win or be
+   suggested as a lead. `tests/test_race_replay.py` replays a recorded race
+   where a test-editing branch used to score green - it is now refused while
+   the real fix still wins.
+5. **The diagnosis is web-grounded.** One real Tavily search per run over the
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the
    search is a hint, never a verdict.
