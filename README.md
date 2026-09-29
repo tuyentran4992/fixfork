@@ -79,14 +79,16 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 133 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 137 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be
    suggested as a lead. `tests/test_race_replay.py` replays a recorded race
    where a test-editing branch used to score green - it is now refused while
-   the real fix still wins; the exported patch is re-checked against the same
-   list, so a renamed or C-quoted protected path is withheld, not shipped.
+   the real fix still wins. Protected paths are matched case-insensitively -
+   `Tests/` (as in Pillow), `__tests__/` and `testdata/` all count - and the
+   exported patch is re-checked against the same list, so a renamed, quoted
+   or differently-cased protected path is withheld, not shipped.
 5. **The diagnosis is web-grounded.** One real Tavily search per run over the
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the

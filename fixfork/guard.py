@@ -32,8 +32,14 @@ class _HasFile(Protocol):
 
 
 # (pattern over the repo-relative path, human-readable reason)
+# Matching is case-insensitive (see protected_reason): conventions differ -
+# python-pillow/Pillow keeps its whole suite in "Tests/", JS projects use
+# "__tests__/", and a case-sensitive match would leave those unprotected.
 PROTECTED: list[tuple[str, str]] = [
-    (r"(^|/)(tests?|testing|spec|specs)(/|$)", "edits files under a test directory"),
+    (
+        r"(^|/)(tests?|testing|specs?|__tests?__|testdata|test_data)(/|$)",
+        "edits files under a test directory",
+    ),
     (r"(^|/)test_[^/]*\.py$", "edits a test file"),
     (r"(^|/)[^/]*_test\.py$", "edits a test file"),
     (r"(^|/)conftest\.py$", "edits test configuration"),
@@ -52,11 +58,16 @@ PROTECTED: list[tuple[str, str]] = [
 
 
 def protected_reason(path: str) -> str | None:
-    """Return why ``path`` is off-limits, or None when the path is editable."""
+    """Return why ``path`` is off-limits, or None when the path is editable.
+
+    Matching is case-insensitive: real repositories use conventions like
+    ``Tests/`` or ``__tests__/``, and on case-insensitive filesystems a
+    case-variant edit still lands on the same file.
+    """
     if not path or not path.strip():
         return "empty path"
     for pattern, reason in PROTECTED:
-        if re.search(pattern, path):
+        if re.search(pattern, path, re.IGNORECASE):
             return reason
     return None
 
