@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 
 from .events import EventSink, NullSink
-from .hypotheses import HypothesisError, build_prompt, parse_hypotheses, render_files
+from .hypotheses import (
+    HypothesisError,
+    build_prompt,
+    parse_edit_object,
+    parse_hypotheses,
+    render_files,
+)
 from .judge import pick_winner
 from .model_router import ModelRouter, RouterError
 from .models import BranchResult, BranchStatus, Edit, RunReport
@@ -41,23 +47,20 @@ def _parse_loop_edits(text: str) -> list[Edit]:
     end = text.rfind("}")
     if start == -1 or end == -1:
         raise HypothesisError("no JSON object found in loop reply")
-    data = json.loads(text[start : end + 1])
+    # json.loads raises JSONDecodeError (a ValueError) and a JSON array has no
+    # .get: both used to escape the loop's `except (RouterError,
+    # HypothesisError)` and crash the whole run. Same class of bug as the
+    # earlier AttributeError-escapes-the-except incident.
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise HypothesisError(f"loop reply is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HypothesisError("loop reply JSON is not an object")
     edits = data.get("edits")
     if not isinstance(edits, list):
         raise HypothesisError("loop reply has no 'edits' list")
-    parsed: list[Edit] = []
-    for raw in edits:
-        if not isinstance(raw, dict):
-            raise HypothesisError("loop reply has a non-object edit")
-        edit = Edit(
-            file=str(raw.get("file", "")).strip(),
-            find=str(raw.get("find", "")),
-            replace=str(raw.get("replace", "")),
-        )
-        if not edit.file or not edit.find or edit.find == edit.replace:
-            raise HypothesisError("loop reply has an invalid edit")
-        parsed.append(edit)
-    return parsed
+    return [parse_edit_object(raw, "loop reply") for raw in edits]
 
 
 def run_pipeline(

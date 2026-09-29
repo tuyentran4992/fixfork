@@ -42,7 +42,12 @@ MODEL_PRICES = {
 # a prompt that had succeeded a minute earlier). The router starts at
 # DEFAULT_MAX_TOKENS and retries, doubling up to DEFAULT_MAX_TOKENS_CAP.
 DEFAULT_MAX_TOKENS = 4096
-DEFAULT_MAX_TOKENS_CAP = 16384
+# Measured 2026-09-29 on a real repo prompt (humanize #329, ~24KB): the model
+# spent the FULL 16384-token budget on hidden reasoning and returned no answer,
+# so the old cap was below what this workload needs. 32768 is the next
+# doubling; hitting the cap again means the task/prompt needs rethinking, not a
+# larger budget.
+DEFAULT_MAX_TOKENS_CAP = 32768
 
 
 class RouterError(RuntimeError):
@@ -57,6 +62,17 @@ class ReasoningBudgetExhausted(RouterError):
     ``content=None`` with ``finish_reason="length"``. Retry with a larger
     budget. (Measured 2026-09-27: max_tokens=15 -> None; max_tokens=4096 ->
     sometimes None on the same prompt that succeeded before.)"""
+
+
+class EmptyModelReply(RouterError):
+    """Reply carried no usable text while the budget was NOT the limit.
+
+    ``finish_reason`` was not ``length`` but ``content`` was None or
+    whitespace-only (measured 2026-09-29: a reply with 25k+ tokens of reasoning
+    and ``content="\\n"`` slipped through as a "successful" reply). Retryable
+    with the SAME budget: doubling does not help when the model produced
+    nothing on its own.
+    """
 
 
 @dataclass
@@ -85,6 +101,32 @@ def estimate_cost(role: str, prompt_tokens: int, completion_tokens: int) -> floa
     return (prompt_tokens * price["in"] + completion_tokens * price["out"]) / 1_000_000
 
 
+def _int_or_zero(value: object) -> int:
+    """Token counts come from an external API: anything unparsable counts as 0
+    instead of raising a ValueError that would escape the callers' error
+    handling. (Cross-check finding, 2026-09-29.)"""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _usage_cost_usd(role: str, body: dict) -> float:
+    """Cost of a response that could NOT be used as an answer.
+
+    Retry attempts still burn real tokens server-side; a run that reports only
+    successful calls would understate what it spent.
+    """
+    usage = body.get("usage") or {}
+    if not isinstance(usage, dict):
+        return 0.0
+    return estimate_cost(
+        role,
+        _int_or_zero(usage.get("prompt_tokens")),
+        _int_or_zero(usage.get("completion_tokens")),
+    )
+
+
 def parse_chat_completion(body: dict, role: str) -> ModelReply:
     """Turn a raw chat-completions response into a ``ModelReply``.
 
@@ -99,9 +141,19 @@ def parse_chat_completion(body: dict, role: str) -> ModelReply:
         raise RouterError(
             f"unexpected Token Factory response: {json.dumps(body)[:400]}"
         ) from exc
+    if not isinstance(message, dict):
+        raise RouterError(
+            "unexpected Token Factory response (message is not an object): "
+            f"{json.dumps(body)[:400]}"
+        )
 
     text = message.get("content")
-    if not text:
+    # Three states observed live on 2026-09-29 (large prompt): a usable answer,
+    # content=None with finish_reason="length" (budget gone), and content="\n"
+    # (whitespace-only with finish_reason="stop") - the last one used to pass
+    # this function as a "successful" reply and only exploded later, midway
+    # through JSON parsing, losing the retry chance.
+    if not isinstance(text, str) or not text.strip():
         finish = choice.get("finish_reason")
         if finish == "length":
             raise ReasoningBudgetExhausted(
@@ -109,16 +161,24 @@ def parse_chat_completion(body: dict, role: str) -> ModelReply:
                 f"answer; reasoning tokens count as completion tokens - raise "
                 f"max_tokens: {json.dumps(body)[:400]}"
             )
-        if message.get("reasoning"):
+        if finish == "content_filter":
+            # Retrying the same prompt through the filter would just burn
+            # another call: fail fast instead. (Cross-check finding, 2026-09-29.)
             raise RouterError(
-                f"empty model content (reply carried reasoning but no content): "
+                f"model stopped on content_filter with no answer: {json.dumps(body)[:400]}"
+            )
+        if message.get("reasoning"):
+            raise EmptyModelReply(
+                f"empty model content (reply carried reasoning but no usable text): "
                 f"{json.dumps(body)[:400]}"
             )
-        raise RouterError(f"empty model content: {json.dumps(body)[:400]}")
+        raise EmptyModelReply(f"empty model content: {json.dumps(body)[:400]}")
 
     usage = body.get("usage") or {}
-    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    if not isinstance(usage, dict):
+        usage = {}
+    prompt_tokens = _int_or_zero(usage.get("prompt_tokens"))
+    completion_tokens = _int_or_zero(usage.get("completion_tokens"))
     return ModelReply(
         text=text,
         tokens_used=prompt_tokens + completion_tokens,
@@ -138,12 +198,30 @@ class NebiusRouter:
         timeout: int = 120,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         max_tokens_cap: int = DEFAULT_MAX_TOKENS_CAP,
+        max_attempts: int = 5,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key or os.environ.get("NEBIUS_API_KEY", "")
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.max_tokens_cap = max_tokens_cap
+        # Bound on total calls per request: budget doublings AND empty-reply
+        # retries both count, so a stuck model cannot loop forever on money.
+        self.max_attempts = max_attempts
+        # Every response with usage, successful or not: retries burn tokens too.
+        # Instance-level total for the whole run (new router = fresh counter).
+        self.spent_usd = 0.0
+        # Nonsensical limits would disable those loop bounds (a zero budget
+        # never grows under doubling); reject them up front rather than
+        # discovering it as a hang. (Cross-check finding, 2026-09-29.)
+        if max_tokens < 1:
+            raise RouterError(f"max_tokens must be >= 1 (got {max_tokens})")
+        if max_tokens_cap < max_tokens:
+            raise RouterError(
+                f"max_tokens_cap must be >= max_tokens (got {max_tokens_cap} < {max_tokens})"
+            )
+        if max_attempts < 1:
+            raise RouterError(f"max_attempts must be >= 1 (got {max_attempts})")
         if not self.api_key:
             raise RouterError(
                 "NEBIUS_API_KEY is not set - cannot call Token Factory. "
@@ -154,14 +232,31 @@ class NebiusRouter:
         if role not in MODEL_IDS:
             raise RouterError(f"unknown role {role!r} (expected one of {sorted(MODEL_IDS)})")
         budget = self.max_tokens
+        attempts = 0
         while True:
+            attempts += 1
             body = self._call(role, prompt, budget)
             try:
-                return parse_chat_completion(body, role)
+                reply = parse_chat_completion(body, role)
             except ReasoningBudgetExhausted:
-                if budget >= self.max_tokens_cap:
+                self.spent_usd += _usage_cost_usd(role, body)
+                # Retry only while another call is both allowed and able to
+                # make progress; a stuck ladder must not loop forever.
+                # (Cross-check finding, 2026-09-29.)
+                if budget >= self.max_tokens_cap or attempts >= self.max_attempts:
                     raise
-                budget = min(budget * 2, self.max_tokens_cap)
+                next_budget = min(budget * 2, self.max_tokens_cap)
+                if next_budget <= budget:  # belt and braces: no progress
+                    raise
+                budget = next_budget
+                continue
+            except EmptyModelReply:
+                self.spent_usd += _usage_cost_usd(role, body)
+                if attempts >= self.max_attempts:
+                    raise
+                continue  # same budget: the budget was not the problem
+            self.spent_usd += reply.cost_usd
+            return reply
 
     def _call(self, role: str, prompt: str, max_tokens: int) -> dict:
         payload = {

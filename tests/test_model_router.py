@@ -6,6 +6,7 @@ from unittest import mock
 
 from fixfork.model_router import (
     MODEL_IDS,
+    EmptyModelReply,
     NebiusRouter,
     ReasoningBudgetExhausted,
     RouterError,
@@ -56,6 +57,19 @@ class ParseChatCompletionTest(unittest.TestCase):
             )
         self.assertIn("reasoning", str(ctx.exception))
 
+    def test_whitespace_only_content_raises_empty_reply(self):
+        # observed live 2026-09-29: content="\n" must be a retryable error, not
+        # a "successful" reply that dies later inside JSON parsing
+        with self.assertRaises(EmptyModelReply):
+            parse_chat_completion(_body(content="\n"), role="loop")
+        with self.assertRaises(EmptyModelReply):
+            parse_chat_completion(_body(content="   \n  "), role="loop")
+
+    def test_message_not_an_object(self):
+        body = {"choices": [{"finish_reason": "stop", "message": ["not", "a", "dict"]}]}
+        with self.assertRaises(RouterError):
+            parse_chat_completion(body, role="loop")
+
     def test_garbage_body(self):
         with self.assertRaises(RouterError):
             parse_chat_completion({"error": "boom"}, role="loop")
@@ -87,6 +101,98 @@ class RetryBudgetTest(unittest.TestCase):
         ):
             with self.assertRaises(ReasoningBudgetExhausted):
                 router.complete("loop", "p")
+
+    def test_empty_reply_retried_with_same_budget(self):
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=400)
+        bodies = [_body(content="\n"), _body(content="ok")]
+        calls: list[int] = []
+
+        def fake_call(role, prompt, max_tokens):
+            calls.append(max_tokens)
+            return bodies.pop(0)
+
+        with mock.patch.object(router, "_call", side_effect=fake_call):
+            reply = router.complete("loop", "p")
+        self.assertEqual(reply.text, "ok")
+        self.assertEqual(calls, [100, 100])  # doubling does not help emptiness
+
+    def test_empty_reply_gives_up_after_max_attempts(self):
+        router = NebiusRouter(
+            api_key="test", max_tokens=100, max_tokens_cap=400, max_attempts=3
+        )
+        calls: list[int] = []
+
+        def fake_call(role, prompt, max_tokens):
+            calls.append(max_tokens)
+            return _body(content="   ")
+
+        with mock.patch.object(router, "_call", side_effect=fake_call):
+            with self.assertRaises(EmptyModelReply):
+                router.complete("loop", "p")
+        self.assertEqual(len(calls), 3)  # bounded: no endless money loop
+
+    def test_spent_usd_counts_failed_attempts(self):
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=200)
+        with mock.patch.object(
+            router,
+            "_call",
+            return_value=_body(content=None, finish="length", prompt=1000, completion=2000),
+        ):
+            with self.assertRaises(ReasoningBudgetExhausted):
+                router.complete("loop", "p")
+        # two attempts (100 then 200 budget) burned real tokens; the report
+        # must not pretend they were free
+        per_attempt = (1000 * 0.06 + 2000 * 0.24) / 1_000_000
+        self.assertAlmostEqual(router.spent_usd, 2 * per_attempt, places=9)
+
+
+class RouterConfigGuardTest(unittest.TestCase):
+    """Cross-check fixes (qwen3.8-max, 2026-09-29): nonsense limits must be
+    rejected up front, and the doubling path must respect the attempt bound."""
+
+    def test_invalid_config_rejected(self):
+        with self.assertRaises(RouterError):
+            NebiusRouter(api_key="test", max_tokens=0)
+        with self.assertRaises(RouterError):
+            NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=50)
+        with self.assertRaises(RouterError):
+            NebiusRouter(api_key="test", max_attempts=0)
+
+    def test_doubling_path_bounded_by_max_attempts(self):
+        router = NebiusRouter(
+            api_key="test", max_tokens=100, max_tokens_cap=12800, max_attempts=3
+        )
+        calls: list[int] = []
+
+        def fake_call(role, prompt, max_tokens):
+            calls.append(max_tokens)
+            return _body(content=None, finish="length")
+
+        with mock.patch.object(router, "_call", side_effect=fake_call):
+            with self.assertRaises(ReasoningBudgetExhausted):
+                router.complete("loop", "p")
+        # the cap still had room (12800), yet the ladder stopped at attempt 3
+        self.assertEqual(calls, [100, 200, 400])
+
+
+class UsageGuardTest(unittest.TestCase):
+    def test_garbage_usage_counts_as_zero_not_crash(self):
+        body = _body(content="hello")
+        body["usage"] = {"prompt_tokens": "abc", "completion_tokens": None}
+        reply = parse_chat_completion(body, role="loop")
+        self.assertEqual(reply.text, "hello")
+        self.assertEqual(reply.tokens_used, 0)
+        body["usage"] = "not a dict"
+        reply = parse_chat_completion(body, role="loop")
+        self.assertEqual(reply.tokens_used, 0)
+
+    def test_content_filter_fails_fast(self):
+        with self.assertRaises(RouterError) as ctx:
+            parse_chat_completion(
+                _body(content=None, finish="content_filter"), role="loop"
+            )
+        self.assertNotIsInstance(ctx.exception, EmptyModelReply)
+        self.assertIn("content_filter", str(ctx.exception))
 
 
 class ModelSlugTest(unittest.TestCase):

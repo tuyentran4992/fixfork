@@ -21,8 +21,16 @@ fixes race as forked branches through a git-style sandbox abstraction
 > demo repo, ~$0.003 per run; the exported patch was re-applied to a pristine
 > checkout with `git apply` and the tests passed). Web grounding via Tavily
 > is wired and verified (2026-09-28: a live run injected 5 real search results
-> into the diagnosis prompt before proposing hypotheses). The Token Factory
-> Sandboxes backend is wired next.
+> into the diagnosis prompt before proposing hypotheses).
+> Validated on a real external repository (2026-09-29): run against
+> python-humanize (base commit 823ad60~1 plus the regression tests from
+> PR #329), FixFork went from 6 failing tests to a winning patch; the exported
+> patch re-applied cleanly with `git apply` outside the pipeline (pristine
+> checkout, isolated sandbox, unprivileged user) and the repository's own test
+> suite then reported 310 passed (three files whose dev-only dependencies are
+> absent from the sandbox excluded). The run took about 7.6 minutes and about
+> $0.026 in model calls, retries included.
+> The Token Factory Sandboxes backend is wired next.
 
 ## How it works
 
@@ -62,7 +70,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 80 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 105 tests.
 4. **The diagnosis is web-grounded.** One real Tavily search per run over the
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the
@@ -74,7 +82,7 @@ Instead of a single "suggested fix":
   OpenAI-compatible API. The router tracks prompt/completion tokens and USD
   cost per branch, and it detects reasoning-budget exhaustion
   (`finish_reason=length` with empty content) and retries with a doubled
-  `max_tokens` (4096 -> 8192 -> 16384).
+  `max_tokens` (4096 -> 8192 -> 16384 -> 32768).
 - **Nemotron 3 Super 120B** (`nvidia/nemotron-3-super-120b-a12b`) - the
   diagnosis model: it reads the repo files and the failure log and proposes
   three divergent root causes, each with a concrete edit plan.

@@ -7,8 +7,10 @@ from fixfork.fakes import DEMO_HYPOTHESES, FakeRouter
 from fixfork.hypotheses import (
     HypothesisError,
     generate_hypotheses,
+    parse_edit_object,
     parse_hypotheses,
 )
+from fixfork.pipeline import _parse_loop_edits
 
 
 class ParseHypothesesTest(unittest.TestCase):
@@ -61,6 +63,60 @@ class ParseHypothesesTest(unittest.TestCase):
         ]
         with self.assertRaises(HypothesisError):
             parse_hypotheses(json.dumps(items), n=2)
+
+    def test_non_string_fields_rejected_not_coerced(self):
+        # str() coercion used to turn None into the literal word "None" written
+        # into a source file; non-strings are broken replies now
+        good = DEMO_HYPOTHESES[0]["edits"][0]
+        for bad_item in (
+            {"title": 123, "rationale": "a", "edits": [good]},
+            {"title": "T", "rationale": ["not", "text"], "edits": [good]},
+            {"title": "T", "rationale": "a", "edits": [{"file": "src/tax.py", "find": None, "replace": "x"}]},
+            {"title": "T", "rationale": "a", "edits": [{"file": "src/tax.py", "find": "x", "replace": None}]},
+        ):
+            partner = {"title": "Fine", "rationale": "b", "edits": [dict(good)]}
+            with self.assertRaises(HypothesisError):
+                parse_hypotheses(json.dumps([bad_item, partner]), n=2)
+
+
+class ParseEditObjectTest(unittest.TestCase):
+    def test_file_stripped_find_kept_byte_exact(self):
+        edit = parse_edit_object(
+            {"file": " src/tax.py ", "find": " x = 1\n", "replace": "y"}, "test"
+        )
+        self.assertEqual(edit.file, "src/tax.py")
+        self.assertEqual(edit.find, " x = 1\n")
+
+    def test_empty_replace_allowed_but_non_string_rejected(self):
+        edit = parse_edit_object({"file": "a.py", "find": "x = 1", "replace": ""}, "t")
+        self.assertEqual(edit.replace, "")
+        with self.assertRaises(HypothesisError):
+            parse_edit_object({"file": "a.py", "find": "x = 1", "replace": 5}, "t")
+
+
+class LoopReplyParseTest(unittest.TestCase):
+    """The in-branch iteration reply must fail as HypothesisError, never as an
+    uncaught JSONDecodeError/AttributeError that crashes the whole run."""
+
+    def test_invalid_json_raises_hypothesis_error(self):
+        with self.assertRaises(HypothesisError):
+            _parse_loop_edits('{"edits": [}')
+
+    def test_edits_not_list_rejected(self):
+        with self.assertRaises(HypothesisError):
+            _parse_loop_edits('{"edits": "nope"}')
+
+    def test_bad_edit_object_rejected(self):
+        with self.assertRaises(HypothesisError):
+            _parse_loop_edits('{"edits": [{"file": "a.py", "find": 3, "replace": "y"}]}')
+
+    def test_valid_loop_reply_parsed(self):
+        edits = _parse_loop_edits('{"edits": [{"file": "a.py", "find": "x", "replace": "y"}]}')
+        self.assertEqual(len(edits), 1)
+
+    def test_empty_reply_prose_rejected(self):
+        with self.assertRaises(HypothesisError):
+            _parse_loop_edits("I have no further idea.")
 
 
 class GenerateHypothesesTest(unittest.TestCase):

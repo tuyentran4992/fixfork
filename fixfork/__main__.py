@@ -10,7 +10,12 @@ from pathlib import Path
 from . import __version__
 from .events import JsonlEventSink, NullSink
 from .fakes import FakeRouter
-from .model_router import NebiusRouter, RouterError
+from .model_router import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_MAX_TOKENS_CAP,
+    NebiusRouter,
+    RouterError,
+)
 from .pipeline import run_pipeline
 from .report import render_html, render_markdown, summary_dict
 from .research import ResearchError, TavilyResearch
@@ -67,6 +72,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="web-search grounding for diagnosis via the Tavily API "
         "(default: tavily on live runs, off with --fake)",
     )
+    run.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="Token Factory read timeout in seconds "
+        "(large prompts + long reasoning can run for minutes)",
+    )
+    run.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        dest="max_tokens",
+        help="starting completion budget per model call; reasoning models "
+        "retry with a doubled budget up to --max-tokens-cap",
+    )
+    run.add_argument(
+        "--max-tokens-cap",
+        type=int,
+        default=DEFAULT_MAX_TOKENS_CAP,
+        dest="max_tokens_cap",
+        help="hard cap for the retry ladder (default measured on a real repo)",
+    )
 
     research = sub.add_parser(
         "research",
@@ -108,7 +135,11 @@ def main(argv: list[str] | None = None) -> int:
         print("router: FakeRouter (offline, deterministic)")
     else:
         try:
-            router = NebiusRouter()
+            router = NebiusRouter(
+                timeout=args.timeout,
+                max_tokens=args.max_tokens,
+                max_tokens_cap=args.max_tokens_cap,
+            )
             print("router: NebiusRouter (Token Factory)")
         except RouterError as exc:
             print(f"! {exc}")
@@ -175,6 +206,11 @@ def main(argv: list[str] | None = None) -> int:
         f"tokens: {report.total_tokens} ({report.diagnosis_tokens} diagnosis) "
         f"| cost ~ ${report.total_cost_usd:.4f}"
     )
+    if isinstance(router, NebiusRouter):
+        print(
+            f"router spend: ${router.spent_usd:.4f} incl. retry attempts "
+            "(all responses with usage)"
+        )
     print(f"report -> {args.out}")
     if args.json:
         print(json.dumps(summary_dict(report), indent=2))
