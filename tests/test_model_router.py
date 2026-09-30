@@ -50,6 +50,17 @@ class ParseChatCompletionTest(unittest.TestCase):
         with self.assertRaises(ReasoningBudgetExhausted):
             parse_chat_completion(_body(content=None, finish="length"), role="loop")
 
+    def test_partial_content_length_raises_budget_exhausted(self):
+        # observed live 2026-09-30 (tomlkit race): a 3002-char reply truncated
+        # mid-string passed as "successful", then the whole run died at
+        # hypothesis parsing with 0 branches. Partial text + finish_reason=
+        # "length" must be retryable at the router level, same as the empty case.
+        with self.assertRaises(ReasoningBudgetExhausted):
+            parse_chat_completion(
+                _body(content='[{"title": "truncated mid-', finish="length"),
+                role="reason",
+            )
+
     def test_none_content_with_reasoning(self):
         with self.assertRaises(RouterError) as ctx:
             parse_chat_completion(
@@ -92,6 +103,29 @@ class RetryBudgetTest(unittest.TestCase):
         with mock.patch.object(router, "_call", side_effect=fake_call):
             reply = router.complete("loop", "p")
         self.assertEqual(reply.text, "ok")
+        self.assertEqual(calls, [100, 200, 400])
+
+    def test_partial_answer_length_retries_with_doubled_budget(self):
+        # a cut-off (partial) answer followed by finish_reason="length" must
+        # trigger the same doubling ladder as the empty-content case. The
+        # second fixture ([{}] + length) is deliberate: a length-stop is
+        # retried even when the visible text looks complete - see the guard
+        # comment in parse_chat_completion.
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=400)
+        bodies = [
+            _body(content='[{"cut', finish="length"),
+            _body(content="[{}]", finish="length"),
+            _body(content="[{}]"),
+        ]
+        calls: list[int] = []
+
+        def fake_call(role, prompt, max_tokens):
+            calls.append(max_tokens)
+            return bodies.pop(0)
+
+        with mock.patch.object(router, "_call", side_effect=fake_call):
+            reply = router.complete("reason", "p")
+        self.assertEqual(reply.text, "[{}]")
         self.assertEqual(calls, [100, 200, 400])
 
     def test_gives_up_at_cap(self):

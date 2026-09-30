@@ -55,13 +55,17 @@ class RouterError(RuntimeError):
 
 
 class ReasoningBudgetExhausted(RouterError):
-    """Completion budget ran out before the model produced any answer text.
+    """Completion budget ran out before the model produced a usable answer.
 
     Reasoning tokens count as completion tokens: with a low ``max_tokens`` a
     reasoning model can spend the whole budget thinking and return
-    ``content=None`` with ``finish_reason="length"``. Retry with a larger
-    budget. (Measured 2026-09-27: max_tokens=15 -> None; max_tokens=4096 ->
-    sometimes None on the same prompt that succeeded before.)"""
+    ``content=None`` with ``finish_reason="length"``. It can also happen
+    MID-ANSWER: the reply is non-empty but cut off mid-way (measured
+    2026-09-30 live: a 3002-char reply truncated mid-string passed as
+    "successful" and the run died at JSON parsing with 0 branches). Retry with
+    a larger budget in both cases. (Measured 2026-09-27: max_tokens=15 ->
+    None; max_tokens=4096 -> sometimes None on the same prompt that succeeded
+    before.)"""
 
 
 class EmptyModelReply(RouterError):
@@ -148,13 +152,13 @@ def parse_chat_completion(body: dict, role: str) -> ModelReply:
         )
 
     text = message.get("content")
+    finish = choice.get("finish_reason")
     # Three states observed live on 2026-09-29 (large prompt): a usable answer,
     # content=None with finish_reason="length" (budget gone), and content="\n"
     # (whitespace-only with finish_reason="stop") - the last one used to pass
     # this function as a "successful" reply and only exploded later, midway
     # through JSON parsing, losing the retry chance.
     if not isinstance(text, str) or not text.strip():
-        finish = choice.get("finish_reason")
         if finish == "length":
             raise ReasoningBudgetExhausted(
                 "finish_reason=length: the completion budget was spent before any "
@@ -173,6 +177,22 @@ def parse_chat_completion(body: dict, role: str) -> ModelReply:
                 f"{json.dumps(body)[:400]}"
             )
         raise EmptyModelReply(f"empty model content: {json.dumps(body)[:400]}")
+
+    # A NON-empty answer can still be cut mid-way by the completion budget:
+    # observed live 2026-09-30 (tomlkit race) - a 3002-char diagnosis reply
+    # truncated mid-string with finish_reason="length" passed as a "successful"
+    # reply, then the whole run died at hypothesis parsing with 0 branches.
+    # Every caller parses the full reply as JSON (verified: the only call sites
+    # are the diagnosis call and the in-branch loop; both JSON), so partial
+    # text from a length-stop is never usable: treat it as budget exhaustion
+    # and let the retry ladder double the budget. A length-stop that happens to
+    # end after a complete JSON body is retried too - one bounded extra call is
+    # the accepted price of never feeding a truncated reply to a parser.
+    if finish == "length":
+        raise ReasoningBudgetExhausted(
+            "finish_reason=length with a PARTIAL answer (reply cut mid-way by "
+            f"the completion budget); raise max_tokens: {json.dumps(body)[:400]}"
+        )
 
     usage = body.get("usage") or {}
     if not isinstance(usage, dict):
