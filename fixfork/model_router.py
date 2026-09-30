@@ -213,6 +213,16 @@ def parse_chat_completion(body: dict, role: str) -> ModelReply:
             f"the completion budget); raise max_tokens: {json.dumps(body)[:400]}"
         )
 
+    # Same rule for a filter-stopped reply even when some text is visible: the
+    # content may be truncated or redacted, and every caller would hand it to
+    # a JSON parser. Not retried - the filter would just trip again. (Cross-
+    # check rounds 1+2, 2026-09-30; the empty-content case below already did.)
+    if finish == "content_filter":
+        raise RouterError(
+            "model stopped on content_filter (reply unusable even with visible "
+            f"text): {json.dumps(body)[:400]}"
+        )
+
     usage = body.get("usage") or {}
     if not isinstance(usage, dict):
         usage = {}

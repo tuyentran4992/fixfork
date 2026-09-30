@@ -333,6 +333,17 @@ class UsageGuardTest(unittest.TestCase):
         self.assertNotIsInstance(ctx.exception, EmptyModelReply)
         self.assertIn("content_filter", str(ctx.exception))
 
+    def test_content_filter_with_content_is_rejected(self):
+        # cross-check rounds 1+2 (30/09): a filter-stopped reply must not be
+        # handed to the JSON parsers even when some text is visible - the text
+        # may be truncated or redacted (same rule as a length-stop)
+        with self.assertRaises(RouterError) as ctx:
+            parse_chat_completion(
+                _body(content='[{"a": 1}]', finish="content_filter"), role="loop"
+            )
+        self.assertNotIsInstance(ctx.exception, EmptyModelReply)
+        self.assertIn("content_filter", str(ctx.exception))
+
 
 class ModelSlugTest(unittest.TestCase):
     def test_slugs_are_the_verified_live_ones(self):
