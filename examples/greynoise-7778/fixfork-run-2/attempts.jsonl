@@ -1,0 +1,4 @@
+{"role": "reason", "attempt": 1, "max_tokens": 16384, "outcome": "ok", "finish_reason": "stop", "prompt_tokens": 6854, "completion_tokens": 5767, "cost_usd": 0.0072465, "error": ""}
+{"role": "loop", "attempt": 1, "max_tokens": 16384, "outcome": "ok", "finish_reason": "stop", "prompt_tokens": 6455, "completion_tokens": 1797, "cost_usd": 0.00081858, "error": ""}
+{"role": "loop", "attempt": 1, "max_tokens": 16384, "outcome": "ok", "finish_reason": "stop", "prompt_tokens": 6454, "completion_tokens": 1209, "cost_usd": 0.0006774, "error": ""}
+{"role": "loop", "attempt": 1, "max_tokens": 16384, "outcome": "ok", "finish_reason": "stop", "prompt_tokens": 6458, "completion_tokens": 1491, "cost_usd": 0.0007453199999999999, "error": ""}

@@ -1,0 +1,36 @@
+
+[
+    {
+        "title": "Use safe dictionary access with default value for missing classification",
+        "rationale": "The code assumes the 'classification' key is always present in the internet_scanner_intelligence dictionary, but GreyNoise may omit it for IPs not observed mass-scanning. Using .get() with a default value prevents KeyError and treats missing classification as 'unknown' (non-benign), allowing threat actor generation to proceed.",
+        "edits": [
+            {
+                "file": "internal-enrichment/greynoise/src/connector/connector.py",
+                "find": "        and (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\")",
+                "replace": "        and (data[\"internet_scanner_intelligence\"].get(\"classification\", \"unknown\") != \"benign\")"
+            }
+        ]
+    },
+    {
+        "title": "Check key presence before accessing classification value",
+        "rationale": "Instead of assuming the classification key exists, explicitly verify its presence. If missing, treat as non-benign (since lack of classification implies not confirmed benign) to allow threat actor generation. If present, evaluate the benign condition as before.",
+        "edits": [
+            {
+                "file": "internal-enrichment/greynoise/src/connector/connector.py",
+                "find": "        and (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\")",
+                "replace": "        and ((\"classification\" not in data[\"internet_scanner_intelligence\"]) or (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\"))"
+            }
+        ]
+    },
+    {
+        "title": "Invert equality check with safe access to handle missing keys",
+        "rationale": "Replace the inequality check with an equality check wrapped in 'not' and use .get() to safely retrieve classification (returning None if missing). This avoids KeyError by evaluating to True when classification is missing or not benign, maintaining the original intent while handling absent keys gracefully.",
+        "edits": [
+            {
+                "file": "internal-enrichment/greynoise/src/connector/connector.py",
+                "find": "        and (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\")",
+                "replace": "        and not (data[\"internet_scanner_intelligence\"].get(\"classification\") == \"benign\")"
+            }
+        ]
+    }
+]

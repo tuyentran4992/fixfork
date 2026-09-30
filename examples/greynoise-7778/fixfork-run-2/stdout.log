@@ -1,0 +1,30 @@
+router: NebiusRouter (Token Factory)
+research: Tavily web search (api key from env)
+sandbox: LocalSandbox (local temp dirs)
+baseline: FAILED (3 of 11)
+web research: 5 source(s) for "KeyError: 'classification' sh /data/hackathon/nghien-cuu/rep"
+diagnosis: 3 hypotheses (12621 tokens, $0.0072)
+fork branch 1: Use safe dictionary access with default value for missing classification
+branch 1: red | FAILED (2 of 11) | 2 line(s) changed
+fork branch 2: Check key presence before accessing classification value
+branch 2: red | FAILED (2 of 11) | 2 line(s) changed
+fork branch 3: Invert equality check with safe access to handle missing keys
+branch 3: red | FAILED (3 of 3) | 3 line(s) changed
+winner: branch 1 — no branch went green; branch 1 failed least (FAILED (2 of 11)) - treat its edits as a lead, not a fix
+rollback branch 2 (fork discarded)
+rollback branch 3 (fork discarded)
+done: 36485 tokens, ~$0.0095
+patch: none written (no winning diff this run)
+html -> /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/fixfork-run2/fixfork-live.html
+raw diagnosis -> /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/fixfork-run2/fixfork-live.md.diagnosis.json
+raw loop replies -> /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/fixfork-run2/fixfork-live.md.loops.jsonl
+model attempts -> /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/fixfork-run2/fixfork-live.md.attempts.jsonl (4 call(s), 0 retried)
+baseline: FAILED (3 of 11)
+research: 5 source(s) for "KeyError: 'classification' sh /data/hackathon/nghien-cuu/rep"
+  branch 1: red | FAILED (2 of 11) | 2 line(s) changed
+  branch 2: red | FAILED (2 of 11) | 2 line(s) changed
+  branch 3: red | FAILED (3 of 3) | 3 line(s) changed
+winner: 1 - no branch went green; branch 1 failed least (FAILED (2 of 11)) - treat its edits as a lead, not a fix
+tokens: 36485 (12621 diagnosis) | cost ~ $0.0095
+router spend: $0.0095 incl. retry attempts (all responses with usage)
+report -> /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/fixfork-run2/fixfork-live.md

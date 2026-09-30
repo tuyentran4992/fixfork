@@ -1,0 +1,3 @@
+{"t": 0.0, "event": "run_start", "repo": "/data/hackathon/nghien-cuu/repo-2-ung-vien/clone-connectors", "test_command": "sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh", "branches": 3}
+{"t": 3.242, "event": "baseline_done", "ok": false, "summary": "FAILED (3 of 11)"}
+{"t": 6.65, "event": "research_done", "query": "KeyError: 'classification' sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh", "n_sources": 5, "sources": ["https://www.greynoise.io/press/greynoise-releases-2026-state-of-the-edge-report", "https://docs.greynoise.io/docs/using-the-greynoise-api", "https://www.youtube.com/watch?v=qT4H5D2SWhs"]}
