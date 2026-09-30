@@ -26,6 +26,42 @@ _SKIP_DIRS = {"__pycache__", ".git", ".pytest_cache"}
 _SKIP_SUFFIXES = (".pyc",)
 
 
+def _shq(text: str) -> str:
+    """Quote one string as a POSIX shell word (busybox sh compatible)."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _decode_tar_payload(payload: str) -> dict[str, str]:
+    """Decode a base64 tar payload into {relative path: text}.
+
+    Directories, cache paths and bytecode are skipped; binary files are
+    skipped by design (text-only snapshots).
+    """
+    import base64 as _b64
+    import io
+    import tarfile
+
+    blob = _b64.b64decode(payload)
+    tree: dict[str, str] = {}
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:") as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            rel = member.name[2:] if member.name.startswith("./") else member.name
+            if not rel or any(part in _SKIP_DIRS for part in rel.split("/")):
+                continue
+            if rel.endswith(_SKIP_SUFFIXES):
+                continue
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                continue
+            try:
+                tree[rel] = extracted.read().decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # binary file: skipped by design (text-only snapshots)
+    return tree
+
+
 class SandboxError(RuntimeError):
     """Raised when a sandbox operation fails (bad edit target, missing file...)."""
 
@@ -256,9 +292,12 @@ class NebiusSandbox:
     * ops carry ``result.state.exit_code`` and ``resources.cost``.
 
     ``create`` uploads the repo via ``POST /files`` and attaches the uploaded
-    blobs to the first spawn; ``apply_edits`` re-uploads changed files and
-    spawns from the current state. ``read_tree`` runs one ``tar | base64``
-    command and decodes it locally (the output is refused if truncated).
+    blobs to the first spawn; ``apply_edits`` fetches only the files its edits
+    name, re-uploads the changed ones and spawns from the current state.
+    ``read_tree`` reads the tree in chunks: one ``find`` listing plus one
+    ``tar | base64`` op per group of ``read_chunk_files`` files, with
+    split-on-truncation - the service caps one op's stdout at exactly
+    1,048,576 chars (measured 2026-09-30); cache paths never enter the tar.
 
     Requires ``NEBIUS_API_KEY`` and a project id (``project=`` or env
     ``NEBIUS_SANDBOX_PROJECT``); the sandboxes API is Beta, so this backend
@@ -278,6 +317,7 @@ class NebiusSandbox:
         image: str | None = None,
         transport=None,
         poll_interval: float = 1.5,
+        read_chunk_files: int = 16,
     ) -> None:
         self.api_key = api_key or os.environ.get("NEBIUS_API_KEY")
         self.project = project or os.environ.get("NEBIUS_SANDBOX_PROJECT")
@@ -290,6 +330,7 @@ class NebiusSandbox:
         self.base_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self.image = image or self.DEFAULT_IMAGE
         self.poll_interval = poll_interval
+        self.read_chunk_files = max(1, read_chunk_files)
         self._transport = transport or self._http
         self._sessions: dict[str, str] = {}  # sid -> current state image uuid
         self._file_ids: dict[str, str] = {}  # sha256 -> uploaded file uuid
@@ -452,11 +493,18 @@ class NebiusSandbox:
         )
 
     def apply_edits(self, sid: str, edits: list[Edit]) -> int:
-        tree = self.read_tree(sid)
+        # Fetch only the files the edits target (2026-09-30): apply_edits never
+        # needs more than the edited files, while a whole-tree read costs
+        # several ops on big trees.
+        wanted: list[str] = []
+        for edit in edits:
+            if edit.file not in wanted:
+                wanted.append(edit.file)
+        fetched = self._fetch_paths(sid, wanted)
         pending: dict[str, str] = {}
         changed_lines = 0
         for edit in edits:
-            content = pending.get(edit.file) or tree.get(edit.file)
+            content = pending[edit.file] if edit.file in pending else fetched.get(edit.file)
             if content is None:
                 raise SandboxError(f"edit target file does not exist: {edit.file!r}")
             span = locate_edit(content, edit.find)
@@ -488,37 +536,92 @@ class NebiusSandbox:
         self._state(sid)
         self._sessions[sid] = snapshot
 
-    def read_tree(self, sid: str) -> dict[str, str]:
-        import base64 as _b64
-        import io
-        import tarfile
+    def _list_files(self, sid: str) -> list[str]:
+        """List text-candidate repo files (one op; busybox-safe).
 
-        command = f"cd {self.REPO_DIR} && tar -cf - . 2>/dev/null | base64 | tr -d '\\n'"
+        Plain ``find`` + sort only: ``find -printf`` is GNU-only and silently
+        fails on the VM's busybox (a failing find behind a pipe looked like
+        "no files"; measured 2026-09-30). Cache dirs and bytecode are filtered
+        here so they never enter any later tar.
+        """
+        command = f"cd {self.REPO_DIR} && find . -type f | LC_ALL=C sort"
+        op = self._op(self._state(sid), command, timeout=60, disposable=True)
+        result, _ = self._result(op)
+        output, _ = self._decode_stream(result.get("stdout"))
+        files: list[str] = []
+        for line in output.splitlines():
+            rel = line.strip()
+            if rel.startswith("./"):
+                rel = rel[2:]
+            if not rel:
+                continue
+            if any(part in _SKIP_DIRS for part in rel.split("/")):
+                continue
+            if rel.endswith(_SKIP_SUFFIXES):
+                continue
+            files.append(rel)
+        if not files:
+            raise SandboxError("read_tree: no files found")
+        return files
+
+    def _fetch_group(self, sid: str, rels: list[str]) -> dict[str, str] | None:
+        """Fetch one group of files via a single ``tar | base64`` op.
+
+        Returns the decoded files, ``{}`` when the op carried no payload, or
+        ``None`` when the service truncated the output (the caller splits the
+        group and refetches). A non-zero ``tar`` exit (missing path) does not
+        fail the op: the absent path is simply not in the result.
+        """
+        paths = " ".join(_shq(f"./{rel}") for rel in rels)
+        command = f"cd {self.REPO_DIR} && tar -cf - {paths} | base64 | tr -d '\\n'"
         op = self._op(self._state(sid), command, timeout=120, disposable=True)
         result, _ = self._result(op)
         payload, truncated = self._decode_stream(result.get("stdout"))
         if truncated:
-            raise SandboxError("read_tree output truncated (tree too large for one op)")
+            return None
         if not payload:
-            raise SandboxError("read_tree returned no data")
-        blob = _b64.b64decode(payload)
+            return {}
+        return _decode_tar_payload(payload)
+
+    def _fetch_paths(self, sid: str, rels: list[str]) -> dict[str, str]:
+        """Fetch the given repo files, chunked with split-on-truncation.
+
+        Each group of ``read_chunk_files`` paths costs one op; a truncated
+        group is split in half and refetched, so total tree size is never a
+        failure mode. Erroring only when a SINGLE file exceeds the per-op
+        stdout cap (exactly 1,048,576 chars - measured 2026-09-30).
+        """
         tree: dict[str, str] = {}
-        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:") as tar:
-            for member in tar.getmembers():
-                if not member.isfile():
+        for start in range(0, len(rels), self.read_chunk_files):
+            stack = [rels[start : start + self.read_chunk_files]]
+            while stack:
+                group = stack.pop()
+                if not group:
                     continue
-                rel = member.name[2:] if member.name.startswith("./") else member.name
-                if not rel or any(part in _SKIP_DIRS for part in rel.split("/")):
+                fetched = self._fetch_group(sid, group)
+                if fetched is None:
+                    if len(group) == 1:
+                        raise SandboxError(
+                            "read_tree: single file above the 1 MiB per-op cap: "
+                            f"{group[0]!r}"
+                        )
+                    mid = len(group) // 2
+                    stack.append(group[mid:])
+                    stack.append(group[:mid])
                     continue
-                if rel.endswith(_SKIP_SUFFIXES):
-                    continue
-                extracted = tar.extractfile(member)
-                if extracted is None:
-                    continue
-                try:
-                    tree[rel] = extracted.read().decode("utf-8")
-                except UnicodeDecodeError:
-                    continue  # binary file: skipped by design (text-only snapshots)
+                tree.update(fetched)
+        return tree
+
+    def read_tree(self, sid: str) -> dict[str, str]:
+        """Read the repo tree (chunked; safe against the 1 MiB per-op cap).
+
+        One ``find`` listing + one ``tar | base64`` op per group of
+        ``read_chunk_files`` files, with split-on-truncation. A whole-tree
+        single op exceeds the service's stdout cap on real trees (the
+        pytest-generated ``__pycache__`` in tomlkit pushed it over; measured
+        2026-09-30).
+        """
+        tree = self._fetch_paths(sid, self._list_files(sid))
         if not tree:
             raise SandboxError("read_tree decoded no text files")
         return tree
