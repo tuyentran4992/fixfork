@@ -108,19 +108,38 @@ def estimate_cost(role: str, prompt_tokens: int, completion_tokens: int) -> floa
 def _int_or_zero(value: object) -> int:
     """Token counts come from an external API: anything unparsable counts as 0
     instead of raising a ValueError that would escape the callers' error
-    handling. (Cross-check finding, 2026-09-29.)"""
+    handling. Negatives clamp to 0 too - a negative count would poison
+    ``spent_usd`` and break the attempt-log invariant. (Cross-check findings,
+    2026-09-29 + 2026-09-30.)"""
     try:
-        return int(value)  # type: ignore[arg-type]
+        return max(0, int(value))  # type: ignore[arg-type]
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def _finish_reason(body: dict | None) -> str:
+    """``finish_reason`` from a chat-completion body; "" when absent/malformed.
+
+    Kept separate from ``parse_chat_completion`` on purpose: the attempt log
+    must stay readable even for bodies that parser rejects.
+    """
+    try:
+        value = body["choices"][0]["finish_reason"]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return value if isinstance(value, str) else ""
 
 
 def _usage_cost_usd(role: str, body: dict) -> float:
     """Cost of a response that could NOT be used as an answer.
 
     Retry attempts still burn real tokens server-side; a run that reports only
-    successful calls would understate what it spent.
-    """
+    successful calls would understate what it spent. A body that is not even a
+    JSON object (e.g. ``[]`` from a broken proxy) has no readable usage: 0 -
+    and it must not crash the error path that is about to report it.
+    (Cross-check finding, 2026-09-30.)"""
+    if not isinstance(body, dict):
+        return 0.0
     usage = body.get("usage") or {}
     if not isinstance(usage, dict):
         return 0.0
@@ -209,7 +228,16 @@ def parse_chat_completion(body: dict, role: str) -> ModelReply:
 
 
 class NebiusRouter:
-    """OpenAI-compatible client for Nebius Token Factory (stdlib only)."""
+    """OpenAI-compatible client for Nebius Token Factory (stdlib only).
+
+    Every server call leaves one record in ``attempts`` (role, ladder step,
+    budget, outcome, finish_reason, tokens, cost) - including failed retries,
+    so a run's spend can be read back call by call instead of inferred from
+    totals (blind spot found live 2026-09-30: a race retried calls and only
+    the spend delta revealed it). ``retries`` counts retries actually issued.
+    Invariant, unit-tested: ``spent_usd`` equals the sum of ``cost_usd``
+    across ``attempts``.
+    """
 
     def __init__(
         self,
@@ -231,6 +259,10 @@ class NebiusRouter:
         # Every response with usage, successful or not: retries burn tokens too.
         # Instance-level total for the whole run (new router = fresh counter).
         self.spent_usd = 0.0
+        # Per-call log (see class docstring): one record per server call.
+        self.attempts: list[dict] = []
+        # Retries actually issued (ladder steps after the first call).
+        self.retries = 0
         # Nonsensical limits would disable those loop bounds (a zero budget
         # never grows under doubling); reject them up front rather than
         # discovering it as a hang. (Cross-check finding, 2026-09-29.)
@@ -255,11 +287,22 @@ class NebiusRouter:
         attempts = 0
         while True:
             attempts += 1
-            body = self._call(role, prompt, budget)
+            try:
+                body = self._call(role, prompt, budget)
+            except RouterError as exc:
+                # The call never returned a body; it was still an attempt, and
+                # a run that dies here must leave a readable trace. No usage
+                # to bill, so cost stays 0 and the spend invariant holds.
+                self._log_attempt(role, attempts, budget, "call_failed", error=str(exc))
+                raise
             try:
                 reply = parse_chat_completion(body, role)
-            except ReasoningBudgetExhausted:
-                self.spent_usd += _usage_cost_usd(role, body)
+            except ReasoningBudgetExhausted as exc:
+                cost = _usage_cost_usd(role, body)
+                self.spent_usd += cost
+                self._log_attempt(
+                    role, attempts, budget, "budget_exhausted", body, cost, str(exc)
+                )
                 # Retry only while another call is both allowed and able to
                 # make progress; a stuck ladder must not loop forever.
                 # (Cross-check finding, 2026-09-29.)
@@ -269,14 +312,62 @@ class NebiusRouter:
                 if next_budget <= budget:  # belt and braces: no progress
                     raise
                 budget = next_budget
+                self.retries += 1
                 continue
-            except EmptyModelReply:
-                self.spent_usd += _usage_cost_usd(role, body)
+            except EmptyModelReply as exc:
+                cost = _usage_cost_usd(role, body)
+                self.spent_usd += cost
+                self._log_attempt(role, attempts, budget, "empty_reply", body, cost, str(exc))
                 if attempts >= self.max_attempts:
                     raise
+                self.retries += 1
                 continue  # same budget: the budget was not the problem
+            except RouterError as exc:
+                # Non-retryable failure (content_filter, malformed body): fail
+                # fast as before, but bill and log it - every response with
+                # usage counts, and a fatal call must not vanish from the log.
+                cost = _usage_cost_usd(role, body)
+                self.spent_usd += cost
+                self._log_attempt(role, attempts, budget, "fatal", body, cost, str(exc))
+                raise
             self.spent_usd += reply.cost_usd
+            self._log_attempt(role, attempts, budget, "ok", body, reply.cost_usd)
             return reply
+
+    def _log_attempt(
+        self,
+        role: str,
+        attempt: int,
+        budget: int,
+        outcome: str,
+        body: dict | None = None,
+        cost_usd: float = 0.0,
+        error: str = "",
+    ) -> None:
+        """Append one record to ``self.attempts`` (see class docstring).
+
+        ``cost_usd`` must be the same number the caller added to
+        ``spent_usd`` (0 when nothing was billed) - the unit tests assert the
+        two reconcile.
+        """
+        if not isinstance(body, dict):
+            body = None  # non-dict body (cross-check 30/09): no fields to read
+        usage = (body or {}).get("usage") or {}
+        if not isinstance(usage, dict):
+            usage = {}
+        self.attempts.append(
+            {
+                "role": role,
+                "attempt": attempt,
+                "max_tokens": budget,
+                "outcome": outcome,
+                "finish_reason": _finish_reason(body),
+                "prompt_tokens": _int_or_zero(usage.get("prompt_tokens")),
+                "completion_tokens": _int_or_zero(usage.get("completion_tokens")),
+                "cost_usd": cost_usd,
+                "error": error[:300],
+            }
+        )
 
     def _call(self, role: str, prompt: str, max_tokens: int) -> dict:
         payload = {

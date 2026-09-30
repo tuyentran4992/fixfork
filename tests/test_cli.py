@@ -5,6 +5,7 @@ local by default, ``nebius`` builds the live backend, ``--fake`` stays local.
 """
 
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -158,6 +159,45 @@ class SandboxFlagTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(built), 1)
         self.assertIn("NebiusSandbox (Token Factory Sandboxes, live)", out.getvalue())
+
+    def test_attempts_log_written_when_router_kept_one(self):
+        # a live router that logged calls must leave the per-attempt sidecar
+        # behind (retry observability - blind-spot fix 2026-09-30)
+        class OfflineRouter(FakeRouter):
+            def __init__(self, *args, **kwargs):
+                super().__init__()
+                self.spent_usd = 0.0
+                self.attempts = [
+                    {
+                        "role": "loop",
+                        "attempt": 1,
+                        "max_tokens": 100,
+                        "outcome": "ok",
+                        "finish_reason": "stop",
+                        "prompt_tokens": 10,
+                        "completion_tokens": 20,
+                        "cost_usd": 0.000054,
+                        "error": "",
+                    }
+                ]
+                self.retries = 0
+
+        env = self._env_without_nebius()
+        env["NEBIUS_API_KEY"] = "test-key"
+        env["NEBIUS_SANDBOX_PROJECT"] = "test-project"
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch("fixfork.__main__.NebiusRouter", OfflineRouter), \
+                mock.patch("fixfork.__main__.NebiusSandbox", LocalSandbox), \
+                mock.patch("sys.stdout", out), \
+                tempfile.TemporaryDirectory() as tmp:
+            code = main(self._argv(tmp, "--sandbox", "nebius"))
+            sidecar = Path(tmp) / "run.md.attempts.jsonl"
+            self.assertTrue(sidecar.is_file(), "attempts sidecar missing")
+            entry = json.loads(sidecar.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(code, 0)
+        self.assertEqual(entry["outcome"], "ok")
+        self.assertIn("1 call(s)", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -180,6 +180,111 @@ class RetryBudgetTest(unittest.TestCase):
         self.assertAlmostEqual(router.spent_usd, 2 * per_attempt, places=9)
 
 
+class AttemptLogTest(unittest.TestCase):
+    """Per-call attempt log: retries are OBSERVABLE, not inferred from spend.
+
+    (Blind spot found live 2026-09-30: a race retried calls and only the
+    spend delta revealed it - no record said which call failed or why.)
+    """
+
+    def test_attempts_record_each_ladder_step(self):
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=400)
+        bodies = [_body(content=None, finish="length"), _body(content="ok")]
+        calls: list[int] = []
+
+        def fake_call(role, prompt, max_tokens):
+            calls.append(max_tokens)
+            return bodies.pop(0)
+
+        with mock.patch.object(router, "_call", side_effect=fake_call):
+            router.complete("loop", "p")
+        self.assertEqual(calls, [100, 200])
+        log = router.attempts
+        self.assertEqual([e["outcome"] for e in log], ["budget_exhausted", "ok"])
+        self.assertEqual([e["attempt"] for e in log], [1, 2])
+        self.assertEqual([e["max_tokens"] for e in log], [100, 200])
+        self.assertEqual(log[0]["finish_reason"], "length")
+        self.assertEqual(log[1]["finish_reason"], "stop")
+        self.assertEqual(router.retries, 1)
+        self.assertGreater(log[0]["cost_usd"], 0)  # failed call burned tokens
+        # the log explains every cent: spend reconciles with the records
+        self.assertAlmostEqual(
+            router.spent_usd, sum(e["cost_usd"] for e in log), places=9
+        )
+
+    def test_attempts_record_give_up_at_cap(self):
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=200)
+        with mock.patch.object(
+            router, "_call", return_value=_body(content=None, finish="length")
+        ):
+            with self.assertRaises(ReasoningBudgetExhausted):
+                router.complete("loop", "p")
+        self.assertEqual(len(router.attempts), 2)
+        self.assertTrue(all(e["outcome"] == "budget_exhausted" for e in router.attempts))
+        self.assertEqual(router.retries, 1)  # 2nd call was a retry; no retry after it
+        self.assertAlmostEqual(
+            router.spent_usd, sum(e["cost_usd"] for e in router.attempts), places=9
+        )
+
+    def test_attempts_record_empty_reply_same_budget(self):
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=400)
+        bodies = [_body(content="\n"), _body(content="ok")]
+        with mock.patch.object(
+            router, "_call", side_effect=lambda r, p, m: bodies.pop(0)
+        ):
+            router.complete("loop", "p")
+        self.assertEqual(
+            [(e["outcome"], e["max_tokens"]) for e in router.attempts],
+            [("empty_reply", 100), ("ok", 100)],
+        )
+        self.assertEqual(router.retries, 1)
+
+    def test_fatal_reply_is_logged_and_billed(self):
+        # behaviour change 2026-09-30: a non-retryable parse failure
+        # (content_filter) used to propagate WITHOUT its usage being billed;
+        # now every response with usage counts, so the attempt log and
+        # spent_usd reconcile even on a fatal path.
+        router = NebiusRouter(api_key="test")
+        with mock.patch.object(
+            router, "_call", return_value=_body(content=None, finish="content_filter")
+        ):
+            with self.assertRaises(RouterError):
+                router.complete("loop", "p")
+        self.assertEqual(len(router.attempts), 1)
+        self.assertEqual(router.attempts[0]["outcome"], "fatal")
+        self.assertEqual(router.retries, 0)
+        self.assertGreater(router.spent_usd, 0)
+        self.assertAlmostEqual(
+            router.spent_usd, router.attempts[0]["cost_usd"], places=9
+        )
+
+    def test_transport_failure_is_logged_without_cost(self):
+        router = NebiusRouter(api_key="test")
+
+        def boom(role, prompt, max_tokens):
+            raise RouterError("Token Factory call failed: network down")
+
+        with mock.patch.object(router, "_call", side_effect=boom):
+            with self.assertRaises(RouterError):
+                router.complete("loop", "p")
+        self.assertEqual(len(router.attempts), 1)
+        self.assertEqual(router.attempts[0]["outcome"], "call_failed")
+        self.assertIn("network down", router.attempts[0]["error"])
+        self.assertEqual(router.spent_usd, 0.0)  # nothing was billed
+
+    def test_non_dict_body_is_fatal_not_crash(self):
+        # regression guard (cross-check 30/09): a non-dict body (e.g. [] from
+        # a broken proxy) must surface as RouterError with a fatal record -
+        # not as AttributeError from the billing/log helpers
+        router = NebiusRouter(api_key="test")
+        with mock.patch.object(router, "_call", return_value=[]):
+            with self.assertRaises(RouterError):
+                router.complete("loop", "p")
+        self.assertEqual(len(router.attempts), 1)
+        self.assertEqual(router.attempts[0]["outcome"], "fatal")
+        self.assertEqual(router.spent_usd, 0.0)
+
+
 class RouterConfigGuardTest(unittest.TestCase):
     """Cross-check fixes (qwen3.8-max, 2026-09-29): nonsense limits must be
     rejected up front, and the doubling path must respect the attempt bound."""

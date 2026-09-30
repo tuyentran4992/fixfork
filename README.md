@@ -80,8 +80,10 @@ fixes race on forked branches through a git-style sandbox abstraction
    (`not_run`); it still appears in the report (marked `not_run`), but never
    as a branch that ran - its approach was never tested.
 7. **Output** - a self-contained race report (markdown, plus `--html` for a
-   page), the raw model replies for auditing (the diagnosis reply, plus
-   every loop reply in a `.loops.jsonl` sidecar when follow-up rounds ran),
+   page), the raw model replies for auditing (the diagnosis reply, every loop
+   reply in a `.loops.jsonl` sidecar when follow-up rounds ran, and a per-call
+   `.attempts.jsonl` sidecar whenever the live router ran - failed retries
+   included, so the run's spend is auditable call by call),
    and - when a branch wins - a **git-applyable patch** of the winning fix
    (`git apply fixfork-report.patch`).
 
@@ -97,7 +99,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model replies for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 177 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 186 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be
@@ -116,9 +118,11 @@ Instead of a single "suggested fix":
 
 - **Nebius Token Factory** serves every model call through its
   OpenAI-compatible API. The router tracks prompt/completion tokens and USD
-  cost per branch, and it detects reasoning-budget exhaustion
-  (`finish_reason=length` with empty content) and retries with a doubled
-  `max_tokens` (4096 -> 8192 -> 16384 -> 32768).
+  cost per branch, writes a per-call `.attempts.jsonl` sidecar (every call,
+  failed retries included - spend is auditable call by call), and it detects
+  reasoning-budget exhaustion (`finish_reason=length`, empty OR partial
+  content) and retries with a doubled `max_tokens` (4096 -> 8192 -> 16384 ->
+  32768).
 - **Nemotron 3 Super 120B** (`nvidia/nemotron-3-super-120b-a12b`) - the
   diagnosis model: it reads the repo files and the failure log and proposes
   three divergent root causes, each with a concrete edit plan.
@@ -204,9 +208,10 @@ python3 -m fixfork run \
 Sandboxes API.
 
 The live router starts at `max_tokens=4096` and retries with a doubled budget
-(up to 16384) when a reasoning model spends the whole budget thinking instead
+(up to 32768) when a reasoning model spends the whole budget thinking instead
 of answering — reasoning tokens are billed as completion tokens. Tokens and
-USD cost are tracked per branch in the report.
+USD cost are tracked per branch in the report, and every call (failed retries
+included) lands in a `.attempts.jsonl` sidecar next to the report.
 
 ## Layout
 

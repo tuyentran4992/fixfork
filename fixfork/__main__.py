@@ -256,6 +256,24 @@ def main(argv: list[str] | None = None) -> int:
             encoding="utf-8",
         )
         print(f"raw loop replies -> {loops_path}")
+    # Per-call model log (NebiusRouter only; offline routers have nothing to
+    # log): every call incl. failed retries, so a run's spend is explained
+    # call by call in the artifact instead of inferred from totals.
+    attempts_log = getattr(router, "attempts", None) or []
+    if attempts_log:
+        attempts_path = Path(str(args.out) + ".attempts.jsonl")
+        attempts_path.write_text(
+            "".join(
+                json.dumps(_json_safe(entry), ensure_ascii=False, default=str) + "\n"
+                for entry in attempts_log
+            ),
+            encoding="utf-8",
+        )
+        retries = getattr(router, "retries", 0)
+        print(
+            f"model attempts -> {attempts_path} "
+            f"({len(attempts_log)} call(s), {retries} retried)"
+        )
     print(f"baseline: {report.baseline.summary}")
     if report.research_query:
         print(
