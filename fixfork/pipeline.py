@@ -13,6 +13,7 @@ from .hypotheses import (
     HypothesisError,
     build_prompt,
     extract_refs,
+    loads_json_tolerant,
     parse_edit_object,
     parse_hypotheses,
     render_files,
@@ -58,11 +59,16 @@ def _parse_loop_edits(text: str) -> list[Edit]:
     # json.loads raises JSONDecodeError (a ValueError) and a JSON array has no
     # .get: both used to escape the loop's `except (RouterError,
     # HypothesisError)` and crash the whole run. Same class of bug as the
-    # earlier AttributeError-escapes-the-except incident.
-    try:
-        data = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise HypothesisError(f"loop reply is not valid JSON: {exc}") from exc
+    # earlier AttributeError-escapes-the-except incident. Parsing goes through
+    # the same bounded near-valid-JSON repair as the diagnosis reply.
+    raw = text[start : end + 1]
+    data, _repairs = loads_json_tolerant(raw)
+    if data is None:
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HypothesisError(f"loop reply is not valid JSON: {exc}") from exc
+        raise HypothesisError("loop reply is not valid JSON")
     if not isinstance(data, dict):
         raise HypothesisError("loop reply JSON is not an object")
     edits = data.get("edits")
@@ -151,7 +157,7 @@ def run_pipeline(
     report.diagnosis_tokens = reply.tokens_used
     report.diagnosis_cost_usd = reply.cost_usd
     try:
-        hypotheses = parse_hypotheses(reply.text, n=branches)
+        hypotheses = parse_hypotheses(reply.text, n=branches, notes=report.notes)
     except HypothesisError as exc:
         report.notes.append(f"hypothesis reply did not parse: {exc}")
         return report

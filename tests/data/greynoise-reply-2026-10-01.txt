@@ -1,0 +1,35 @@
+
+[
+  {
+    "title": "Use safe dictionary access for missing classification key",
+    "rationale": "The code directly accesses the 'classification' key without checking if it exists, causing KeyError when the key is absent. Using .get() with a default value ('unknown') ensures the key is safely accessed.",
+    "edits": [
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": "        if (\n            data[\"internet_scanner_intelligence\"][\"actor\"]\n            and data[\"internet_scanner_intelligence\"][\"actor\"] != \"unknown\"\n            and (data[\"internet_scanner_intelligence\"][\"actor\"] != \"\")\n>           and (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\")",
+        "replace": "        if (\n            data[\"internet_scanner_intelligence\"][\"actor\"]\n            and data[\"internet_scanner_intelligence\"][\"actor\"] != \"unknown\"\n            and (data[\"internet_scanner_intelligence\"][\"actor\"] != \"\")\n>           and (data[\"internet_scanner_intelligence\"].get(\"classification\", \"unknown\") != \"benign\")"
+      }
+    ]
+  },
+  {
+    "title": "Extract classification to a variable with default before condition",
+    "rationale": "Instead of inline key access, extract the classification value once with a default to avoid repeated lookups and make the condition clearer. This prevents KeyError and centralizes the fallback logic.",
+    "edits": [
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": "        if (\n            data[\"internet_scanner_intelligence\"][\"actor\"]\n            and data[\"internet_scanner_intelligence\"][\"actor\"] != \"unknown\"\n            and (data[\"internet_scanner_intelligence\"][\"actor\"] != \"\")\n>           and (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\")",
+        "replace": "        classification = data[\"internet_scanner_intelligence\"].get(\"classification\", \"unknown\")\n        if (\n            data[\"internet_scanner_intelligence\"][\"actor\"]\n            and data[\"internet_scanner_intelligence\"][\"actor\"] != \"unknown\"\n            and (data[\"internet_scanner_intelligence\"][\"actor\"] != \"\")\n>           and (classification != \"benign\"))"
+    }
+  },
+  {
+    "title": "Refactor condition to explicitly handle missing classification as non-benign",
+    "rationale": "The condition should treat a missing classification as 'unknown' (non-benign) rather than crashing. This version checks for key presence first and uses logical equivalence to maintain the same behavior while avoiding KeyError.",
+    "edits": [
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": "        if (\n            data[\"internet_scanner_intelligence\"][\"actor\"]\n            and data[\"internet_scanner_intelligence\"][\"actor\"] != \"unknown\"\n            and (data[\"internet_scanner_intelligence\"][\"actor\"] != \"\")\n>           and (data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\")",
+        "replace": "        if (\n            data[\"internet_scanner_intelligence\"][\"actor\"]\n            and data[\"internet_scanner_intelligence\"][\"actor\"] != \"unknown\"\n            and (data[\"internet_scanner_intelligence\"][\"actor\"] != \"\")\n>           and (\"classification\" not in data[\"internet_scanner_intelligence\"] or data[\"internet_scanner_intelligence\"][\"classification\"] != \"benign\"))"
+      }
+    ]
+  }
+]

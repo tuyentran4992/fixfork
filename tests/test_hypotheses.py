@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from pathlib import Path
 
 from fixfork.fakes import DEMO_HYPOTHESES, FakeRouter
 from fixfork.hypotheses import (
@@ -9,6 +10,7 @@ from fixfork.hypotheses import (
     generate_hypotheses,
     parse_edit_object,
     parse_hypotheses,
+    repair_json_text,
 )
 from fixfork.pipeline import _parse_loop_edits
 
@@ -99,8 +101,17 @@ class LoopReplyParseTest(unittest.TestCase):
     uncaught JSONDecodeError/AttributeError that crashes the whole run."""
 
     def test_invalid_json_raises_hypothesis_error(self):
+        # deliberately UNREPAIRABLE (bare token, no closing possible): the loop
+        # reply path must still fail as HypothesisError, never as an uncaught
+        # JSONDecodeError - near-valid JSON now goes through the bounded
+        # repair pass (see JsonRepairTest).
         with self.assertRaises(HypothesisError):
-            _parse_loop_edits('{"edits": [}')
+            _parse_loop_edits('{"edits": [oops')
+
+    def test_near_miss_bracket_repaired_to_empty_edits(self):
+        # '{"edits": [}' is a near-miss for an empty edits list: the repair
+        # pass fixes it and the loop then simply stops (no more edits).
+        self.assertEqual(_parse_loop_edits('{"edits": [}'), [])
 
     def test_edits_not_list_rejected(self):
         with self.assertRaises(HypothesisError):
@@ -152,6 +163,72 @@ class GenerateHypothesesTest(unittest.TestCase):
             prompt.index("--- tests/test_items.py ---"),
             prompt.index("--- aaa.py ---"),
         )
+
+
+class JsonRepairTest(unittest.TestCase):
+    """Near-valid model JSON is repaired (bounded) instead of aborting the run.
+
+    Live evidence: 2026-10-01 greynoise run (see
+    data/greynoise-reply-2026-10-01.txt) - a 3-hypothesis reply with one
+    missing "]" mid-stream aborted the run after ~$0.006 while parsing was
+    strict.
+    """
+
+    def _broken_mid_stream(self) -> str:
+        items = DEMO_HYPOTHESES
+        second = json.dumps(items[1])
+        # drop the "]" that closes the second object's "edits" array
+        broken_second = second[:-2] + second[-1]
+        return (
+            "["
+            + json.dumps(items[0])
+            + ",\n"
+            + broken_second
+            + ",\n"
+            + json.dumps(items[2])
+            + "]"
+        )
+
+    def test_missing_bracket_mid_stream_is_repaired(self):
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(self._broken_mid_stream(), n=3, notes=notes)
+        self.assertEqual([h.id for h in hypotheses], [1, 2, 3])
+        self.assertTrue(any("repaired" in note for note in notes))
+
+    def test_trailing_comma_is_repaired(self):
+        reply = json.dumps(DEMO_HYPOTHESES)[:-1] + ",]"
+        hypotheses = parse_hypotheses(reply, n=3)
+        self.assertEqual(len(hypotheses), 3)
+
+    def test_missing_final_bracket_is_repaired(self):
+        reply = json.dumps(DEMO_HYPOTHESES)[:-1]
+        hypotheses = parse_hypotheses(reply, n=3)
+        self.assertEqual(len(hypotheses), 3)
+
+    def test_valid_json_is_not_touched(self):
+        reply = json.dumps(DEMO_HYPOTHESES)
+        repaired, fixes = repair_json_text(reply)
+        self.assertEqual(fixes, 0)
+        self.assertEqual(repaired, reply)
+
+    def test_unrepairable_reply_still_raises(self):
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses('[{"title": "A", "rationale', n=3)
+
+    def test_loop_edit_reply_with_trailing_comma_is_repaired(self):
+        broken = '{"edits": [{"file": "src/tax.py", "find": "a", "replace": "b"},]}'
+        edits = _parse_loop_edits(broken)
+        self.assertEqual(len(edits), 1)
+
+    def test_real_captured_reply_is_repaired(self):
+        reply = (
+            Path(__file__).parent / "data" / "greynoise-reply-2026-10-01.txt"
+        ).read_text(encoding="utf-8")
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes)
+        self.assertEqual(len(hypotheses), 3)
+        self.assertTrue(all(h.edits for h in hypotheses))
+        self.assertTrue(any("repaired" in note for note in notes))
 
 
 if __name__ == "__main__":
