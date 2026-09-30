@@ -38,6 +38,16 @@ fixes race on forked branches through a git-style sandbox abstraction
 > re-applied with `git apply` on a pristine checkout (tests green). The race
 > used 13 sandbox operations, measured $0.0044 in sandbox cost, and took
 > ~102 s wall-clock including the live diagnosis.
+> **Real-world result** (merged 2026-09-30): run against a live upstream
+> issue, python-poetry/tomlkit #619 (stdlib `fold` support) - the runs
+> reproduced the failure and located the fix area; the run traces are public
+> (`examples/tomlkit-619/`). Neither run finished the patch on its own; the
+> final patch (10 source lines plus 2 regression tests, completed and
+> verified by hand from the run report) passed tomlkit's own full suite
+> (1,060 passed) and was merged into tomlkit master by the maintainer
+> 66 minutes after the pull request opened
+> ([PR #620](https://github.com/python-poetry/tomlkit/pull/620): +52/-1
+> across 2 files, 24/24 CI checks green).
 
 ## How it works
 
