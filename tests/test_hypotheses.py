@@ -215,6 +215,28 @@ class JsonRepairTest(unittest.TestCase):
         with self.assertRaises(HypothesisError):
             parse_hypotheses('[{"title": "A", "rationale', n=3)
 
+    def test_truncated_inside_string_is_rejected_cleanly(self):
+        # soi chéo 01/10 (aibox, on the repair patch): EOF while inside a
+        # string literal must not be "closed off" - closers appended then
+        # parse as string content, and the repair loop burns its whole budget
+        # for nothing. Such a reply is budget-truncated: reject at once.
+        repaired, fixes = repair_json_text('{"title": "A", "rationale')
+        self.assertIsNone(repaired)
+        self.assertEqual(fixes, 0)
+
+    def test_truncated_after_dangling_escape_is_rejected_cleanly(self):
+        # text ends with a lone backslash inside the string (pending escape)
+        repaired, fixes = repair_json_text('["ab\\')
+        self.assertIsNone(repaired)
+        self.assertEqual(fixes, 0)
+
+    def test_truncated_outside_string_is_still_closed(self):
+        # regression guard for the legitimate cut-off case this fallback
+        # exists for: EOF outside any string literal -> closers appended
+        repaired, fixes = repair_json_text('[{"a": 1')
+        self.assertEqual(repaired, '[{"a": 1}]')
+        self.assertEqual(fixes, 1)
+
     def test_loop_edit_reply_with_trailing_comma_is_repaired(self):
         broken = '{"edits": [{"file": "src/tax.py", "find": "a", "replace": "b"},]}'
         edits = _parse_loop_edits(broken)

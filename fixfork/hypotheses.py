@@ -191,7 +191,15 @@ MAX_JSON_REPAIR_FIXES = 6
 
 def _append_missing_closers(text: str) -> str:
     """Append closers for every bracket/brace left open, scanning outside
-    string literals (escape-aware)."""
+    string literals (escape-aware).
+
+    Refuses to touch text that ends INSIDE a string literal (including a
+    dangling escape): closing an unterminated string would fabricate a
+    truncated value as if it were complete, and any closer appended while the
+    string is still open parses as part of that string - useless AND
+    misleading. Such a reply is budget-truncated, not near-valid; the right
+    handling is an honest rejection (and a bigger-budget retry upstream).
+    """
     stack: list[str] = []
     in_str = False
     esc = False
@@ -211,6 +219,8 @@ def _append_missing_closers(text: str) -> str:
         elif ch in "]}":
             if stack and stack[-1] == ch:
                 stack.pop()
+    if in_str:
+        return text
     return text + "".join(reversed(stack))
 
 
