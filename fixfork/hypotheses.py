@@ -279,10 +279,29 @@ def repair_json_text(
     return None, fixes
 
 
-def loads_json_tolerant(raw: str) -> tuple[object | None, int]:
+class _ParseFailure:
+    """Distinct "could not be parsed, even after the repair pass" marker.
+
+    ``None`` cannot carry this meaning: ``json.loads("null")`` is a VALID
+    parse whose value is ``None``. Using ``None`` as the failure sentinel
+    conflated a null reply with unparseable output (soi chéo 01/10, aibox).
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return "<JSON parse failure>"
+
+
+PARSE_FAILURE = _ParseFailure()
+
+
+def loads_json_tolerant(raw: str) -> tuple[object, int]:
     """``json.loads`` with the bounded repair pass above.
 
-    Returns ``(value, n_fixes)``; ``(None, n)`` when even the repair fails.
+    Returns ``(value, n_fixes)``; ``(PARSE_FAILURE, n)`` when even the repair
+    fails. The failure marker is a distinct sentinel, NOT ``None``, because
+    ``null`` is a valid JSON value.
     """
     try:
         return json.loads(raw), 0
@@ -290,11 +309,11 @@ def loads_json_tolerant(raw: str) -> tuple[object | None, int]:
         pass
     repaired, fixes = repair_json_text(raw)
     if repaired is None:
-        return None, fixes
+        return PARSE_FAILURE, fixes
     try:
         return json.loads(repaired), fixes
     except json.JSONDecodeError:
-        return None, fixes
+        return PARSE_FAILURE, fixes
 
 
 def _require_text(value, where: str) -> str:
@@ -339,11 +358,13 @@ def parse_hypotheses(
 ) -> list[Hypothesis]:
     raw = extract_json_array(text)
     items, repairs = loads_json_tolerant(raw)
-    if items is None:
+    if items is PARSE_FAILURE:
         try:
             json.loads(raw)
         except json.JSONDecodeError as exc:  # keep the parser's detail for debugging
             raise HypothesisError(f"hypothesis reply is not valid JSON: {exc}") from exc
+        # Defensive: PARSE_FAILURE means the strict parse above already failed,
+        # so this line is unreachable today (soi chéo 01/10).
         raise HypothesisError("hypothesis reply is not valid JSON")
     if repairs and notes is not None:
         notes.append(

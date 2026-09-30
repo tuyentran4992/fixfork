@@ -7,7 +7,9 @@ from pathlib import Path
 from fixfork.fakes import DEMO_HYPOTHESES, FakeRouter
 from fixfork.hypotheses import (
     HypothesisError,
+    PARSE_FAILURE,
     generate_hypotheses,
+    loads_json_tolerant,
     parse_edit_object,
     parse_hypotheses,
     repair_json_text,
@@ -241,6 +243,33 @@ class JsonRepairTest(unittest.TestCase):
         broken = '{"edits": [{"file": "src/tax.py", "find": "a", "replace": "b"},]}'
         edits = _parse_loop_edits(broken)
         self.assertEqual(len(edits), 1)
+
+    def test_loop_repair_leaves_an_audit_note(self):
+        # soi chéo 01/10 (aibox): loop-path repairs were applied silently; the
+        # run report must say when a follow-up reply was repaired.
+        broken = '{"edits": [{"file": "src/tax.py", "find": "a", "replace": "b"},]}'
+        notes: list[str] = []
+        edits = _parse_loop_edits(broken, notes=notes)
+        self.assertEqual(len(edits), 1)
+        self.assertTrue(any("repaired" in note for note in notes))
+
+    def test_repaired_loop_reply_without_edits_still_rejected(self):
+        # A repaired follow-up reply that still lacks the 'edits' list is
+        # rejected, but the repair note stays: it is a fact about the reply,
+        # and the parse_error lands next to it in loop_raw for context.
+        notes: list[str] = []
+        with self.assertRaises(HypothesisError):
+            _parse_loop_edits('{"nope": [}', notes=notes)
+        self.assertTrue(any("repaired" in note for note in notes))
+
+    def test_json_null_is_not_a_parse_failure(self):
+        # `null` is a VALID JSON parse; the failure marker must be distinct
+        # from None (the old None sentinel conflated the two - soi chéo 01/10).
+        value, fixes = loads_json_tolerant("null")
+        self.assertIsNone(value)
+        self.assertEqual(fixes, 0)
+        value, _ = loads_json_tolerant("{not json at all")
+        self.assertIs(value, PARSE_FAILURE)
 
     def test_real_captured_reply_is_repaired(self):
         reply = (

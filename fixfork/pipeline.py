@@ -10,6 +10,7 @@ from .events import EventSink, NullSink
 from .hypotheses import (
     MAX_FILE_CHARS,
     MAX_TOTAL_FILES_CHARS,
+    PARSE_FAILURE,
     HypothesisError,
     build_prompt,
     extract_refs,
@@ -51,7 +52,7 @@ Failure log (tail):
 """
 
 
-def _parse_loop_edits(text: str) -> list[Edit]:
+def _parse_loop_edits(text: str, notes: list[str] | None = None) -> list[Edit]:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1:
@@ -62,15 +63,24 @@ def _parse_loop_edits(text: str) -> list[Edit]:
     # earlier AttributeError-escapes-the-except incident. Parsing goes through
     # the same bounded near-valid-JSON repair as the diagnosis reply.
     raw = text[start : end + 1]
-    data, _repairs = loads_json_tolerant(raw)
-    if data is None:
+    data, repairs = loads_json_tolerant(raw)
+    if data is PARSE_FAILURE:
         try:
             json.loads(raw)
         except json.JSONDecodeError as exc:
             raise HypothesisError(f"loop reply is not valid JSON: {exc}") from exc
+        # Defensive: PARSE_FAILURE means the strict parse above already failed,
+        # so this line is unreachable today (soi chéo 01/10).
         raise HypothesisError("loop reply is not valid JSON")
     if not isinstance(data, dict):
         raise HypothesisError("loop reply JSON is not an object")
+    if repairs and notes is not None:
+        # Same audit rule the diagnosis reply follows: a repaired reply must
+        # say so, or the report claims a clean parse that never happened
+        # (soi chéo 01/10, aibox: loop-path repairs were applied silently).
+        notes.append(
+            f"loop reply was lightly repaired ({repairs} JSON fix(es)) before parsing"
+        )
     edits = data.get("edits")
     if not isinstance(edits, list):
         raise HypothesisError("loop reply has no 'edits' list")
@@ -284,7 +294,7 @@ def run_pipeline(
                 }
                 report.loop_raw.append(loop_entry)
                 try:
-                    extra_edits = _parse_loop_edits(loop_reply.text)
+                    extra_edits = _parse_loop_edits(loop_reply.text, notes=report.notes)
                 except HypothesisError as exc:
                     loop_entry["parse_error"] = str(exc)
                     break
