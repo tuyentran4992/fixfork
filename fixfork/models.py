@@ -16,6 +16,7 @@ class BranchStatus(str, Enum):
     RED = "red"
     ERROR = "error"
     BLOCKED = "blocked"  # refused: tried to edit the referee (tests/CI/config)
+    NOT_RUN = "not_run"  # refused before any sandbox op: edits locate nowhere
 
 
 @dataclass
@@ -55,7 +56,7 @@ class BranchResult:
     cost_usd: float = 0.0
     rounds: int = 0
     log_tail: str = ""
-    blocked_reason: str = ""  # set when status is BLOCKED (guard refusal)
+    blocked_reason: str = ""  # set when status is BLOCKED or NOT_RUN (refusal)
 
 
 @dataclass
@@ -72,6 +73,9 @@ class RunReport:
     diagnosis_raw: str = ""
     diagnosis_tokens: int = 0
     diagnosis_cost_usd: float = 0.0
+    # Raw follow-up (loop) replies, parse failures included, so a run stays
+    # debuggable (a real run lost its broken loop replies).
+    loop_raw: list[dict] = field(default_factory=list)
     research_query: str = ""
     research_sources: list[str] = field(default_factory=list)
 

@@ -62,7 +62,7 @@ def render_markdown(report: RunReport) -> str:
     for branch in report.branches:
         tests_cell = (
             branch.blocked_reason
-            if branch.status is BranchStatus.BLOCKED
+            if branch.status in (BranchStatus.BLOCKED, BranchStatus.NOT_RUN)
             else branch.outcome.summary
         )
         lines.append(
@@ -123,6 +123,7 @@ th { background: rgba(127,127,127,.12); }
 .badge.red { background: #fbdede; color: #8c1a1a; }
 .badge.error { background: #ffe9c7; color: #7a4a00; }
 .badge.blocked { background: #e6dcff; color: #4b2d8f; }
+.badge.not_run { background: #efeadd; color: #6a5a2c; }
 .badge.pending { background: #e8e8e8; color: #444; }
 .verdict { background: rgba(59,108,255,.08); border-left: 4px solid #3b6cff;
            padding: .75rem 1rem; margin: 1rem 0; }
@@ -155,7 +156,7 @@ def render_html(report: RunReport) -> str:
         for b in report.branches:
             tests_cell = (
                 b.blocked_reason
-                if b.status is BranchStatus.BLOCKED
+                if b.status in (BranchStatus.BLOCKED, BranchStatus.NOT_RUN)
                 else b.outcome.summary
             )
             rows.append(

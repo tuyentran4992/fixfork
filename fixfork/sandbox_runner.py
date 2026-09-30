@@ -149,6 +149,41 @@ def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
     return starts[first], starts[last] + len(lines[last]), "normalised"
 
 
+def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
+    """All-or-nothing pre-flight: would every edit apply to ``files``?
+
+    Walks the edits in order, applying each one to an in-memory copy with the
+    exact same ``locate_edit`` the sandbox appliers use, so this check can
+    never drift from apply semantics. Returns a problem list - empty means
+    every edit would apply and the branch is safe to fork and race. It stops
+    at the first problem: the appliers raise on the first failing edit, so a
+    later problem would never be reached anyway.
+
+    Measured failure class behind this check (2026-09-30, run #2): a model
+    reply whose ``find`` text could not be located (one-character syntax
+    slip) still forked a branch; the branch died mid-apply and was counted
+    among the branches that "ran", hiding that its approach was never
+    actually tested by the referee.
+
+    File lookup is exact-key against the tree map (conservative on purpose):
+    a path spelling that does not resolve here is refused before any sandbox
+    op instead of dying mid-apply.
+    """
+    work = dict(files)
+    for edit in edits:
+        content = work.get(edit.file)
+        if content is None:
+            return [f"edit target file not in the baseline tree: {edit.file!r}"]
+        span = locate_edit(content, edit.find)
+        if span is None:
+            lines = edit.find.strip().splitlines()
+            snippet = lines[0][:60] if lines else ""
+            return [f"edit target not found in {edit.file!r}: {snippet!r}"]
+        start, end, _mode = span
+        work[edit.file] = content[:start] + edit.replace + content[end:]
+    return []
+
+
 class LocalSandbox:
     """Dev backend: one temp dir per branch, no isolation. For tests and demos."""
 

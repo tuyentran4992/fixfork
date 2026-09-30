@@ -75,7 +75,10 @@ fixes race on forked branches through a git-style sandbox abstraction
    The winning branch wins; losers are rolled back. If no branch goes green,
    no patch is exported: the report names the least-failed branch as a lead,
    not a fix. A branch that proposes edits to test/CI/config files is refused
-   before it runs (`blocked`) - the test suite is the referee.
+   before it runs (`blocked`) - the test suite is the referee. A branch whose
+   edits do not locate in the baseline tree is refused before it forks
+   (`not_run`) - its approach was never tested, so it is not counted as a
+   branch that ran.
 7. **Output** - three artifacts per run: the race report (markdown, plus
    `--html` for a self-contained page), a **git-applyable patch** of the
    winning fix (`git apply fixfork-report.patch`), and the raw model reply
@@ -93,7 +96,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model reply for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 162 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 177 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be

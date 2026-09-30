@@ -22,7 +22,7 @@ from .model_router import ModelRouter, RouterError
 from .models import BranchResult, BranchStatus, Edit, RunReport
 from .patch_export import build_patch
 from .research import ResearchClient, ResearchError, build_query, render_research_block
-from .sandbox_runner import SandboxError, SandboxRunner
+from .sandbox_runner import SandboxError, SandboxRunner, preflight_edits
 from .testparse import parse_unittest_output
 
 LOOP_PROMPT_TEMPLATE = """You are FixFork's iteration model inside one branch.
@@ -194,6 +194,35 @@ def run_pipeline(
                 rounds=0,
             )
             continue
+        # A branch is forked only when every BASELINE edit actually locates
+        # in the tree (all-or-nothing, pre-flight). Otherwise the model's
+        # block was broken and the branch would die mid-apply while still
+        # being counted as one that ran - its approach was never tested.
+        # Follow-up (loop) edits are a different case: they apply against
+        # the branch's updated tree and are caught below without discarding
+        # a measured outcome.
+        problems = preflight_edits(base_files, hypothesis.edits)
+        if problems:
+            result.status = BranchStatus.NOT_RUN
+            result.blocked_reason = "; ".join(problems)
+            result.log_tail = (
+                "not run: edits do not locate in the baseline tree: "
+                + result.blocked_reason
+            )
+            report.branches.append(result)
+            sink.emit("branch_not_run", id=hypothesis.id, reason=result.blocked_reason)
+            sink.emit(
+                "branch_done",
+                id=hypothesis.id,
+                status=result.status.value,
+                summary=result.blocked_reason,
+                tests_ok=False,
+                lines_changed=0,
+                tokens=0,
+                cost=0.0,
+                rounds=0,
+            )
+            continue
         sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
         forked_ids.add(hypothesis.id)
         try:
@@ -219,11 +248,40 @@ def run_pipeline(
                             log=branch_log or "(no output)",
                         ),
                     )
-                    extra_edits = _parse_loop_edits(loop_reply.text)
-                except (RouterError, HypothesisError):
+                except RouterError as exc:
+                    # Same shape as a parsed reply (branch_id/round/text/
+                    # tokens/cost_usd) so sidecar consumers can read every
+                    # entry uniformly; empty text + zero cost mark the call
+                    # that errored (soi chéo 30/09: schema was non-uniform).
+                    report.loop_raw.append(
+                        {
+                            "branch_id": hypothesis.id,
+                            "round": rounds,
+                            "text": "",
+                            "tokens": 0,
+                            "cost_usd": 0.0,
+                            "error": str(exc),
+                        }
+                    )
                     break
+                # Keep the raw follow-up reply (and its cost) even when it
+                # does not parse - same rule the diagnosis call follows; a
+                # real run was undebuggable because its loop replies were lost.
                 result.tokens_used += loop_reply.tokens_used
                 result.cost_usd += loop_reply.cost_usd
+                loop_entry = {
+                    "branch_id": hypothesis.id,
+                    "round": rounds,  # test rounds completed when it was asked
+                    "tokens": loop_reply.tokens_used,
+                    "cost_usd": round(loop_reply.cost_usd, 6),
+                    "text": loop_reply.text,
+                }
+                report.loop_raw.append(loop_entry)
+                try:
+                    extra_edits = _parse_loop_edits(loop_reply.text)
+                except HypothesisError as exc:
+                    loop_entry["parse_error"] = str(exc)
+                    break
                 if not extra_edits:
                     break
                 loop_violations = guard.check_edits(extra_edits)

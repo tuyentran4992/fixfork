@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -21,6 +22,23 @@ from .pipeline import run_pipeline
 from .report import render_html, render_markdown, summary_dict
 from .research import ResearchError, TavilyResearch
 from .sandbox_runner import LocalSandbox, NebiusSandbox, SandboxError
+
+
+def _json_safe(value):
+    """Make one loop-raw entry safe for the sidecar JSONL.
+
+    Non-finite floats (NaN/Infinity) become strings so the file stays valid
+    for strict JSON consumers; anything else non-serialisable falls back to
+    ``json.dumps(default=str)`` at the call site. A sidecar write must never
+    crash the CLI or emit invalid JSON (soi chéo 30/09).
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -228,6 +246,16 @@ def main(argv: list[str] | None = None) -> int:
         diag_path = Path(str(args.out) + ".diagnosis.json")
         diag_path.write_text(report.diagnosis_raw, encoding="utf-8")
         print(f"raw diagnosis -> {diag_path}")
+    if report.loop_raw:
+        loops_path = Path(str(args.out) + ".loops.jsonl")
+        loops_path.write_text(
+            "".join(
+                json.dumps(_json_safe(entry), ensure_ascii=False, default=str) + "\n"
+                for entry in report.loop_raw
+            ),
+            encoding="utf-8",
+        )
+        print(f"raw loop replies -> {loops_path}")
     print(f"baseline: {report.baseline.summary}")
     if report.research_query:
         print(
