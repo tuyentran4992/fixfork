@@ -61,5 +61,25 @@ class PreflightEditsTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
 
 
+    def test_uniform_indent_shift_preflights(self):
+        # Live evidence (2026-10-01, run 3): the model's blocks carried one
+        # extra leading space per line and every branch was refused here; the
+        # shift is now accepted (with the replacement corrected by the same
+        # K), so the branch forks and the race runs.
+        files = {"src/a.py": "        x = 1\n        y = 2\n"}
+        shifted = edit(
+            "src/a.py",
+            "         x = 1\n         y = 2",
+            "         x = 1\n         y = 3",
+        )
+        self.assertEqual(preflight_edits(files, [shifted]), [])
+
+    def test_excessive_indent_shift_is_refused(self):
+        files = {"src/a.py": "        x = 1\n"}
+        bad = edit("src/a.py", " " * 13 + "x = 1", "R")
+        problems = preflight_edits(files, [bad])
+        self.assertEqual(len(problems), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

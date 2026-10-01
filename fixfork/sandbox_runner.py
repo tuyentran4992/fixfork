@@ -106,6 +106,14 @@ def _iter_text_files(root: Path):
         yield path
 
 
+# Bound for the uniform leading-space offset the last-resort matcher accepts
+# (see locate_edit); a larger shift means the model's block is not a shifted
+# copy of the file region and must be refused, not guessed at. Measured live
+# 2026-10-01 run 3: +1 on most lines, +5 on one continuation line inside
+# parentheses (17 vs 12 spaces) - allow up to two indent levels of slip.
+MAX_INDENT_SHIFT = 8
+
+
 def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
     """Locate the span ``find`` covers in ``content``; ``None`` when not found.
 
@@ -119,6 +127,17 @@ def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
     fallback is accepted ONLY when it matches a single location; zero or
     several candidates return ``None`` so ambiguity is never resolved
     silently.
+
+    Last resort (mode ``"indent±K"``): the model's block is byte-identical
+    after lstrip on every non-blank line, shifted by ONE uniform leading-space
+    offset K (measured live 2026-10-01, run 3: most lines carried one extra
+    leading space and one continuation line inside parens carried five - the
+    occurrence list's separator bled into the copy). The FIRST such candidate
+    wins - the same first-match semantics as the byte-exact search above, and
+    sequential edits re-scan the updated content, so repeated sites resolve
+    in order. Callers shift the replacement by the same K
+    (``corrected_replace``) so the applied block keeps the file's own
+    indentation. |K| is bounded by ``MAX_INDENT_SHIFT``.
     """
     pos = content.find(find)
     if pos != -1:
@@ -143,10 +162,67 @@ def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
             matches.append((window[0], window[-1]))
             if len(matches) > 1:
                 return None  # ambiguous: refuse, never guess
-    if len(matches) != 1:
-        return None
-    first, last = matches[0]
-    return starts[first], starts[last] + len(lines[last]), "normalised"
+    if len(matches) == 1:
+        first, last = matches[0]
+        return starts[first], starts[last] + len(lines[last]), "normalised"
+    if len(matches) > 1:
+        return None  # ambiguous: refuse, never guess
+
+    # Indent-shift pass (see docstring): uniform leading-space offset K != 0.
+    find_leads = [len(l) - len(l.lstrip(" ")) for l in find_lines]
+    for window_start in range(len(keep) - span + 1):
+        window = keep[window_start : window_start + span]
+        shifts: list[int] = []
+        ok = True
+        for j, target in enumerate(window):
+            file_line = lines[target]
+            if file_line.rstrip().lstrip(" ") != find_lines[j].lstrip(" "):
+                ok = False
+                break
+            file_lead = len(file_line) - len(file_line.lstrip(" "))
+            shifts.append(find_leads[j] - file_lead)
+        if not ok:
+            continue
+        shift = shifts[0]
+        if shift == 0 or any(s != shift for s in shifts):
+            continue
+        if abs(shift) > MAX_INDENT_SHIFT:
+            continue
+        return (
+            starts[window[0]],
+            starts[window[-1]] + len(lines[window[-1]]),
+            f"indent{shift:+d}",
+        )
+    return None
+
+
+def corrected_replace(replace: str, mode: str) -> str | None:
+    """Replacement adjusted for the indent shift ``locate_edit`` accepted.
+
+    ``mode == "indent+K"`` means the model's block has K more leading spaces
+    per line than the file: K spaces are removed from every non-blank line of
+    the replacement (negative K: K spaces are added), so the applied block
+    keeps the file's own indentation. Returns ``None`` when the correction
+    cannot be applied safely - a non-blank replacement line with fewer leading
+    spaces than a positive shift - so callers refuse the edit instead of
+    guessing.
+    """
+    if not mode.startswith("indent"):
+        return replace
+    shift = int(mode[len("indent") :])
+    out: list[str] = []
+    for line in replace.split("\n"):
+        if not line.strip():
+            out.append(line)
+            continue
+        if shift > 0:
+            lead = len(line) - len(line.lstrip(" "))
+            if lead < shift:
+                return None
+            out.append(line[shift:])
+        else:
+            out.append(" " * (-shift) + line)
+    return "\n".join(out)
 
 
 def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
@@ -179,8 +255,14 @@ def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
             lines = edit.find.strip().splitlines()
             snippet = lines[0][:60] if lines else ""
             return [f"edit target not found in {edit.file!r}: {snippet!r}"]
-        start, end, _mode = span
-        work[edit.file] = content[:start] + edit.replace + content[end:]
+        start, end, mode = span
+        replace = corrected_replace(edit.replace, mode)
+        if replace is None:
+            return [
+                f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
+                "is larger than the replacement's own indentation"
+            ]
+        work[edit.file] = content[:start] + replace + content[end:]
     return []
 
 
@@ -246,9 +328,15 @@ class LocalSandbox:
                 raise SandboxError(
                     f"edit target not found in {edit.file!r}: {edit.find!r}"
                 )
-            start, end, _mode = span
+            start, end, mode = span
+            replace = corrected_replace(edit.replace, mode)
+            if replace is None:
+                raise SandboxError(
+                    f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
+                    "is larger than the replacement's own indentation"
+                )
             target.write_text(
-                content[:start] + edit.replace + content[end:], encoding="utf-8"
+                content[:start] + replace + content[end:], encoding="utf-8"
             )
             changed_lines += edit.find.count("\n") + 1
         return changed_lines
@@ -545,8 +633,14 @@ class NebiusSandbox:
             span = locate_edit(content, edit.find)
             if span is None:
                 raise SandboxError(f"edit target not found in {edit.file!r}: {edit.find!r}")
-            start, end, _mode = span
-            pending[edit.file] = content[:start] + edit.replace + content[end:]
+            start, end, mode = span
+            replace = corrected_replace(edit.replace, mode)
+            if replace is None:
+                raise SandboxError(
+                    f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
+                    "is larger than the replacement's own indentation"
+                )
+            pending[edit.file] = content[:start] + replace + content[end:]
             changed_lines += edit.find.count("\n") + 1
         files = {
             f"{self.REPO_DIR}/{rel}": {"uuid": self._upload_file(text.encode())}

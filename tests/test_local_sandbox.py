@@ -4,7 +4,12 @@ import unittest
 from pathlib import Path
 
 from fixfork.models import Edit
-from fixfork.sandbox_runner import LocalSandbox, SandboxError, locate_edit
+from fixfork.sandbox_runner import (
+    LocalSandbox,
+    SandboxError,
+    corrected_replace,
+    locate_edit,
+)
 
 DEMO_REPO = Path(__file__).resolve().parent.parent / "examples" / "demo-repo"
 TEST_CMD = "python3 -m unittest discover -s tests"
@@ -121,6 +126,78 @@ class LocateEditTest(unittest.TestCase):
         self.assertEqual(mode, "normalised")
         self.assertEqual(content[start:end], "a = 1 \nb = 2")
         self.assertEqual(end, len(content))
+
+    def test_uniform_indent_shift_matches_with_positive_offset(self):
+        # Live evidence (2026-10-01, run 3): every find carried exactly one
+        # extra leading space per line - the occurrence list's separator bled
+        # into the model's copy; the byte-exact apply refused all 3 branches.
+        content = "        if x == 1:\n        elif x == 2:\n"
+        find = "         if x == 1:\n         elif x == 2:"
+        span = locate_edit(content, find)
+        assert span is not None
+        start, end, mode = span
+        self.assertEqual(mode, "indent+1")
+        self.assertEqual(content[start:end], "        if x == 1:\n        elif x == 2:")
+
+    def test_indent_shift_edits_apply_in_order_for_repeated_lines(self):
+        # Repeated identical sites resolve in order (same first-match
+        # semantics as the exact search): the second edit re-scans the
+        # updated content and lands on the next site.
+        content = "    a = f()\n    a = f()\n"
+        find = "     a = f()"
+        span = locate_edit(content, find)
+        assert span is not None
+        start, end, mode = span
+        self.assertEqual((start, end, mode), (0, 11, "indent+1"))
+        corrected = corrected_replace("     a = g()", mode)
+        assert corrected is not None
+        self.assertEqual(corrected, "    a = g()")
+        updated = content[:start] + corrected + content[end:]
+        second = locate_edit(updated, find)
+        assert second is not None
+        self.assertEqual(second[0], 12)
+
+    def test_indent_shift_beyond_bound_is_refused(self):
+        content = "        x = 1\n"
+        self.assertIsNone(locate_edit(content, " " * (8 + 9) + "x = 1"))
+
+    def test_indent_shift_up_to_eight_is_accepted(self):
+        # Measured live 2026-10-01: +1 on most lines, +5 on one continuation
+        # line; the bound must cover the measured class.
+        content = "        x = 1\n"
+        span = locate_edit(content, " " * (8 + 5) + "x = 1")
+        assert span is not None
+        self.assertEqual(span[2], "indent+5")
+
+    def test_indent_shift_must_be_uniform(self):
+        content = "    a = 1\n        b = 2\n"
+        find = "     a = 1\n        b = 2"  # +1 on the first line only
+        self.assertIsNone(locate_edit(content, find))
+
+
+class CorrectedReplaceTest(unittest.TestCase):
+    """The replacement is shifted by the same K locate_edit accepted."""
+
+    def test_positive_shift_strips_every_non_blank_line(self):
+        replace = "         n = 2\n\n         m = 3"
+        self.assertEqual(
+            corrected_replace(replace, "indent+1"), "        n = 2\n\n        m = 3"
+        )
+
+    def test_negative_shift_adds_to_every_non_blank_line(self):
+        self.assertEqual(
+            corrected_replace("  a = 2\nb = 3", "indent-2"),
+            "    a = 2\n  b = 3",
+        )
+
+    def test_shallow_line_in_replacement_is_refused(self):
+        # "top = 2" has no leading space to give back: refuse the correction
+        # instead of guessing.
+        self.assertIsNone(corrected_replace("            ok = 1\ntop = 2", "indent+1"))
+
+    def test_exact_and_normalised_modes_pass_through(self):
+        self.assertEqual(corrected_replace("x", "exact"), "x")
+        self.assertEqual(corrected_replace("x", "normalised"), "x")
 
 
 if __name__ == "__main__":
