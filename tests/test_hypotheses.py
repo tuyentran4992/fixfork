@@ -83,6 +83,51 @@ class ParseHypothesesTest(unittest.TestCase):
                 parse_hypotheses(json.dumps([bad_item, partner]), n=2)
 
 
+class CollapseDuplicatesTest(unittest.TestCase):
+    """Race#2 shape (greynoise case study): three differently titled hypotheses
+    carrying the SAME edits used to sink the whole reply. Collapse keeps the
+    fix and reports the true number of unique approaches - no extra model call."""
+
+    @staticmethod
+    def _identical_reply(n: int = 3) -> str:
+        edit = DEMO_HYPOTHESES[0]["edits"][0]
+        items = [
+            {"title": f"Theory {i}", "rationale": "the same fix", "edits": [dict(edit)]}
+            for i in range(1, n + 1)
+        ]
+        return json.dumps(items)
+
+    def test_identical_edit_sets_collapse_to_first(self):
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(
+            self._identical_reply(), n=3, notes=notes, on_duplicates="collapse"
+        )
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(hypotheses[0].title, "Theory 1")
+        self.assertEqual(hypotheses[0].id, 1)
+        self.assertTrue(any("collapsed" in note for note in notes))
+        self.assertTrue(any("duplicate" in note for note in notes))
+
+    def test_partial_duplicates_keep_each_unique_edit_set(self):
+        first = DEMO_HYPOTHESES[0]["edits"][0]
+        second = DEMO_HYPOTHESES[1]["edits"][0]
+        items = [
+            {"title": "A", "rationale": "a", "edits": [dict(first)]},
+            {"title": "B", "rationale": "b", "edits": [dict(second)]},
+            {"title": "C", "rationale": "c", "edits": [dict(first)]},
+        ]
+        hypotheses = parse_hypotheses(json.dumps(items), n=3, on_duplicates="collapse")
+        self.assertEqual([h.title for h in hypotheses], ["A", "B"])
+
+    def test_strict_mode_remains_the_default(self):
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(self._identical_reply(), n=3)
+
+    def test_unknown_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            parse_hypotheses(json.dumps(DEMO_HYPOTHESES), n=3, on_duplicates="bogus")
+
+
 class ParseEditObjectTest(unittest.TestCase):
     def test_file_stripped_find_kept_byte_exact(self):
         edit = parse_edit_object(

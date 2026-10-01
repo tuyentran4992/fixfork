@@ -580,8 +580,24 @@ def parse_edit_object(raw, where: str) -> Edit:
 
 
 def parse_hypotheses(
-    text: str, n: int = 3, notes: list[str] | None = None
+    text: str,
+    n: int = 3,
+    notes: list[str] | None = None,
+    on_duplicates: str = "raise",
 ) -> list[Hypothesis]:
+    """Parse the diagnosis reply into ``n`` hypotheses.
+
+    ``on_duplicates`` controls duplicate handling: "raise" (strict, default -
+    duplicate titles or edit sets reject the whole reply) or "collapse" (keep
+    the first hypothesis of every unique edit set; exact duplicates are
+    dropped with a note). The pipeline collapses: a measured reply (greynoise
+    case study) carried ONE correct fix written under three different titles,
+    and rejecting the whole reply threw a working fix away.
+    """
+    if on_duplicates not in ("raise", "collapse"):
+        raise ValueError(
+            f"on_duplicates must be 'raise' or 'collapse', got {on_duplicates!r}"
+        )
     raw = extract_json_array(text)
     items, repairs = loads_json_tolerant(raw)
     if items is PARSE_FAILURE:
@@ -614,7 +630,10 @@ def parse_hypotheses(
         edits = [parse_edit_object(raw, f"hypothesis #{index}") for raw in raw_edits]
         hypotheses.append(Hypothesis(id=index, title=title, rationale=rationale, edits=edits))
 
-    assert_divergent(hypotheses)
+    if on_duplicates == "collapse":
+        hypotheses = collapse_duplicates(hypotheses, notes=notes)
+    else:
+        assert_divergent(hypotheses)
     return hypotheses
 
 
@@ -638,6 +657,39 @@ def assert_divergent(hypotheses: list[Hypothesis]) -> None:
                     f"hypotheses {hypotheses[i].id} and {hypotheses[j].id} "
                     "propose the exact same edits"
                 )
+
+
+def collapse_duplicates(
+    hypotheses: list[Hypothesis], notes: list[str] | None = None
+) -> list[Hypothesis]:
+    """Keep the first hypothesis of every unique edit set; drop exact duplicates.
+
+    A measured diagnosis reply (greynoise case study) returned three
+    differently titled hypotheses carrying the SAME edits - it was one fix
+    written three times. Rejecting the whole reply lost a fix that
+    hand-verification proved correct (11/11 tests), so the pipeline collapses
+    instead: the fix still races, the report says how many unique approaches
+    actually ran, and no extra model call is made.
+
+    Identity is the edit-set multiset - the same rule the strict check uses,
+    so an edit list permuted into a different order counts as a duplicate.
+    """
+    kept: list[Hypothesis] = []
+    seen: set[tuple[tuple[str, str, str], ...]] = set()
+    for hypothesis in hypotheses:
+        key = _edit_keys(hypothesis)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(hypothesis)
+    dropped = len(hypotheses) - len(kept)
+    if dropped and notes is not None:
+        notes.append(
+            f"duplicate hypotheses collapsed: {len(hypotheses)} proposed, "
+            f"{len(kept)} unique edit set(s) kept, {dropped} duplicate(s) dropped "
+            f"(no extra model call)"
+        )
+    return kept
 
 
 def generate_hypotheses(

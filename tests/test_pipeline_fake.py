@@ -1,5 +1,6 @@
 """End-to-end pipeline test, fully offline (fake router + local sandbox)."""
 
+import json
 import unittest
 from pathlib import Path
 
@@ -45,6 +46,30 @@ class PipelineFakeTest(unittest.TestCase):
         # 5. loop model was consulted for the two failing branches only
         loop_calls = [c for c in router.calls if c[0] == "loop"]
         self.assertEqual(len(loop_calls), 2)
+
+    def test_duplicate_hypotheses_collapse_instead_of_sinking_the_run(self):
+        # race shape: three differently titled hypotheses, the same edits.
+        # Before the collapse fix the whole reply was rejected -> 0 branches.
+        edit = DEMO_HYPOTHESES[0]["edits"][0]
+        duplicate_reply = json.dumps(
+            [
+                {"title": f"Theory {i}", "rationale": "same fix", "edits": [dict(edit)]}
+                for i in range(1, 4)
+            ]
+        )
+        router = FakeRouter(reason_reply=duplicate_reply)
+        sandbox = LocalSandbox()
+        report = run_pipeline(DEMO_REPO, TEST_CMD, router, sandbox, branches=3, max_rounds=1)
+
+        # the fix still raced: one collapsed branch, and it won
+        self.assertEqual(len(report.branches), 1)
+        self.assertEqual(report.branches[0].status, BranchStatus.GREEN)
+        self.assertEqual(report.winner_id, 1)
+        # honesty: the collapse is recorded, and the reply was not re-asked
+        self.assertTrue(any("collapsed" in note for note in report.notes))
+        self.assertFalse(any("did not parse" in note for note in report.notes))
+        reason_calls = [c for c in router.calls if c[0] == "reason"]
+        self.assertEqual(len(reason_calls), 1)
 
     def test_already_green_repo_is_left_alone(self):
         sandbox = LocalSandbox()

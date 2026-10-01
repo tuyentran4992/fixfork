@@ -172,13 +172,22 @@ def run_pipeline(
     report.diagnosis_tokens = reply.tokens_used
     report.diagnosis_cost_usd = reply.cost_usd
     try:
-        hypotheses = parse_hypotheses(reply.text, n=branches, notes=report.notes)
+        # Duplicate edit sets used to reject the whole reply and lose a
+        # correct fix (measured: one good fix written under three titles).
+        # Collapsing keeps the fix, drops exact duplicates and reports how
+        # many unique approaches actually raced - no extra model call.
+        hypotheses = parse_hypotheses(
+            reply.text, n=branches, notes=report.notes, on_duplicates="collapse"
+        )
     except HypothesisError as exc:
         report.notes.append(f"hypothesis reply did not parse: {exc}")
         return report
     report.hypotheses = hypotheses
+    # Count after collapse + the collapse note above tell the full story:
+    # "N proposed -> M unique raced". Saying "proposed {len}" here would report
+    # the post-collapse count as if the model proposed it (soi chéo 01/10).
     report.notes.append(
-        f"diagnosis model proposed {len(hypotheses)} hypotheses "
+        f"diagnosis model produced {len(hypotheses)} unique hypothesis(es) "
         f"({reply.tokens_used} tokens, ${reply.cost_usd:.4f})"
     )
     sink.emit(
