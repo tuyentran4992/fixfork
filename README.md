@@ -13,8 +13,8 @@ with NVIDIA Nemotron models: **Nemotron 3 Super 120B** for the diagnosis and
 the failure signature is grounded with a real **Tavily** web search. Candidate
 fixes race on forked branches through a git-style sandbox abstraction
 (`checkpoint` / `fork` / `rollback`) - a local backend is the default, and the
-**Token Factory Sandboxes** backend is wired and verified live (opt-in,
-`--sandbox nebius`).
+**Token Factory Sandboxes** backend is wired and verified live end to end
+(opt-in, `--sandbox nebius`).
 
 > Status: **early development.** The offline pipeline (deterministic fake
 > router + local sandbox) runs end to end, and live Token Factory model calls
@@ -38,6 +38,13 @@ fixes race on forked branches through a git-style sandbox abstraction
 > re-applied with `git apply` on a pristine checkout (tests green). The race
 > used 13 sandbox operations, measured $0.0044 in sandbox cost, and took
 > ~102 s wall-clock including the live diagnosis.
+> **End-to-end sandbox result** (2026-10-01): the same backend produced and
+> verified the fix end to end, reproduced twice on the live OpenCTI #7778 case -
+> baseline red inside the sandbox VM (3 failed / 8 passed), the reply's three
+> hypotheses shared one edit set (two duplicates dropped, one unique kept), the
+> branch fixed all seven occurrences of the unguarded access and went green
+> (11/11 tests), and the exported patch re-applied on a pristine checkout
+> (11 passed). 34/34 sandbox operations succeeded per run.
 > **Real-world result** (merged 2026-09-30): run against a live upstream
 > issue, python-poetry/tomlkit #619 (stdlib `fold` support) - the runs
 > reproduced the failure and located the fix area; the run traces are public
@@ -148,7 +155,11 @@ Instead of a single "suggested fix":
 - **Token Factory Sandboxes** - the live backend for isolating the three
   racing branches on Nebius infrastructure (opt-in: `--sandbox nebius`).
   Checkpoint, fork and rollback are content-addressed state-image moves; a
-  full race measured 13 operations and $0.0044 in sandbox cost (2026-09-29).
+  full race measured 13 operations and $0.0044 in sandbox cost (2026-09-29),
+  and on 2026-10-01 the backend produced and verified the fix end to end,
+  reproduced twice (baseline red in the VM -> three proposals collapsed to one
+  unique edit set -> branch green 11/11 -> exported patch re-applied, 11
+  passed; 34/34 sandbox operations per run).
 
 ## Web research (Tavily)
 
