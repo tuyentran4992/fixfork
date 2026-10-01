@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from typing import NamedTuple
 
+from . import guard
 from .model_router import ModelReply, ModelRouter
 from .models import Edit, Hypothesis
 
@@ -37,7 +39,7 @@ Failing test command: {test_command}
 Repository files:
 {files}
 
-Failure log (tail):
+{occurrences_block}Failure log (tail):
 {log}
 """
 
@@ -87,17 +89,185 @@ def extract_refs(log: str, files: dict[str, str] | None) -> list[str]:
 _REF_RE = re.compile(r'File "([^"]+)"|([A-Za-z0-9_][\w\-./]*\.py):\d+')
 
 
+# --- Machine-scanned defect occurrences (JEV-p4 plan) -----------------------
+# Live evidence (2026-10-01, greynoise #7778 on OpenCTI connectors): the failing
+# file was 32,214 chars, over the per-file prompt cap, so the diagnosis model
+# never saw it; it patched the single site quoted in the last traceback and
+# every branch stayed red (2/11 tests still failing, 7 sites needed). JEV
+# arbitration picked the combined plan: machine-scan the log-referenced files
+# for EVERY occurrence of the failing access and put that list in the prompt;
+# when no usable signature can be extracted, fall back to rendering the
+# referenced files under a larger budget instead of silently dropping them.
+MAX_OCCURRENCE_LINES = 80
+MAX_OCCURRENCE_LINE_CHARS = 200
+# Fallback per-file and total budget for log-referenced files (refs_full mode).
+REFS_FALLBACK_FILE_CHARS = 48000
+REFS_FALLBACK_TOTAL_CHARS = 64000
+
+_KEYERROR_RE = re.compile(r"""KeyError:\s*['"]([^'"]+)['"]""")
+_PYTEST_QUOTED_LINE_RE = re.compile(r"^>.*$", re.M)
+_SUBSCRIPT_LITERAL_RE = re.compile(r"""\[['"]([^'"]+)['"]\]""")
+
+
+def extract_defect_signature(log: str) -> list[str] | None:
+    """Search substrings that identify the failing access, read from the log.
+
+    First choice: the missing key named by ``KeyError: 'x'``. Fallback: the
+    subscript literals inside pytest's quoted failing lines (``> ...["x"]``) -
+    the LAST literal of each quoted line is the one that raised. Returns exact
+    search substrings in both quote styles, or ``None`` when nothing usable.
+    """
+    keys: list[str] = []
+    match = _KEYERROR_RE.search(log)
+    if match:
+        keys.append(match.group(1))
+    else:
+        for line_match in _PYTEST_QUOTED_LINE_RE.finditer(log):
+            literals = _SUBSCRIPT_LITERAL_RE.findall(line_match.group(0))
+            if literals:
+                keys.append(literals[-1])
+    ordered: list[str] = []
+    for key in keys:
+        if key not in ordered:
+            ordered.append(key)
+    if not ordered:
+        return None
+    patterns: list[str] = []
+    for key in ordered:
+        patterns.append(f'["{key}"]')
+        patterns.append(f"['{key}']")
+    return patterns
+
+
+def scan_occurrences(
+    files: dict[str, str] | None,
+    refs: list[str] | None,
+    patterns: list[str],
+    max_lines: int = MAX_OCCURRENCE_LINES,
+) -> tuple[list[str], int, bool]:
+    """Find every occurrence of any pattern in the log-referenced files.
+
+    Returns ``(lines, total, truncated)``: ``lines`` are ``path:NN: <line>``
+    strings (capped at ``max_lines``), ``total`` is the true number of matching
+    lines and ``truncated`` says whether some were left out of ``lines``. Only
+    ``refs`` are scanned - files the failure log points at are the trusted set.
+    """
+    if not files or not refs or not patterns:
+        return [], 0, False
+    lines: list[str] = []
+    total = 0
+    for rel in refs:
+        content = files.get(rel)
+        if content is None:
+            continue
+        for lineno, line in enumerate(content.split("\n"), start=1):
+            if not any(pattern in line for pattern in patterns):
+                continue
+            total += 1
+            if len(lines) >= max_lines:
+                continue
+            text = line.rstrip()
+            if len(text) > MAX_OCCURRENCE_LINE_CHARS:
+                text = text[:MAX_OCCURRENCE_LINE_CHARS] + " ..."
+            lines.append(f"{rel}:{lineno}: {text}")
+    return lines, total, total > len(lines)
+
+
+def render_occurrences_block(
+    patterns: list[str], lines: list[str], total: int
+) -> str:
+    """Prompt section listing every scanned occurrence, plus the coverage rule."""
+    shown = ", ".join(f"`{p}`" for p in patterns)
+    out = [f"Machine-scanned occurrences of the failing access ({shown}):"]
+    out.extend(f"- {line}" for line in lines)
+    if total > len(lines):
+        out.append(f"- ... (+{total - len(lines)} more occurrences not listed)")
+    out.append(
+        "EVERY hypothesis must include edits covering EVERY occurrence listed "
+        "above - the suite runs all failing tests, so a fix that covers only "
+        "some occurrences is red; do not split one defect's sites across "
+        "hypotheses."
+    )
+    return "\n".join(out) + "\n\n"
+
+
+class DefectScan(NamedTuple):
+    """Result of the pre-prompt defect scan (JEV-p4 plan)."""
+
+    block: str
+    fallback: bool
+    notes: list[str]
+
+
+def defect_scan(
+    log: str, files: dict[str, str] | None, refs: list[str] | None
+) -> DefectScan:
+    """Scan for defect occurrences and decide the prompt strategy.
+
+    Either the machine-scanned occurrence list goes into the prompt, or - when
+    no usable signature exists - the log-referenced files fall back to the
+    larger rendering budget (``refs_full``). Test/CI/build files stay out of
+    the scan: edits to them are refused by the guard anyway, so listing their
+    lines as fix targets would only mislead the model.
+    """
+    patterns = extract_defect_signature(log)
+    scan_refs = [
+        rel for rel in (refs or []) if guard.protected_reason(rel) is None
+    ]
+    excluded = len(scan_refs) != len(refs or [])
+    lines: list[str] = []
+    total = 0
+    if patterns and files and scan_refs:
+        lines, total, _truncated = scan_occurrences(files, scan_refs, patterns)
+    if lines and patterns:
+        note = (
+            f"machine scan: {total} occurrence(s) of the failing access "
+            f"({', '.join(patterns)}) found in log-referenced files and sent "
+            "to the diagnosis prompt"
+        )
+        if total > len(lines):
+            note += f" (only the first {len(lines)} are listed in the prompt)"
+        if excluded:
+            note += "; test/CI/build files were excluded from the scan"
+        return DefectScan(
+            block=render_occurrences_block(patterns, lines, total),
+            fallback=False,
+            notes=[note],
+        )
+    if refs:
+        note = (
+            "machine scan unavailable (no usable signature in the log, or no "
+            "occurrence found in log-referenced files); those files get the "
+            "larger fallback budget in the prompt"
+        )
+        return DefectScan(block="", fallback=True, notes=[note])
+    return DefectScan(
+        block="",
+        fallback=False,
+        notes=["machine scan: no log-referenced files to scan"],
+    )
+
+
 def render_files(
     files: dict[str, str] | None,
     max_file_chars: int = MAX_FILE_CHARS,
     max_total_chars: int = MAX_TOTAL_FILES_CHARS,
     refs: list[str] | None = None,
+    refs_full_file_chars: int = 0,
+    refs_full_total_chars: int = 0,
 ) -> str:
     """Format a repo tree for the prompt, with size guards and honest notes.
 
     ``refs`` (paths mentioned by the failure log) are rendered before anything
     else: on a budget that cannot fit the whole tree, the files the log points
     at must reach the model. Remaining files keep the code-before-docs order.
+
+    ``refs_full_file_chars``/``refs_full_total_chars`` (fallback mode, set when
+    the machine defect scan found no usable occurrence list): log-referenced
+    files are rendered under this larger, separate budget instead of being
+    dropped by the normal caps - the model must still see the file it has to
+    fix. Files that exceed even this budget are named in the note, never
+    silently dropped.
     """
     if not files:
         return "(no repository files provided)"
@@ -105,6 +275,7 @@ def render_files(
     skipped: list[str] = []
     refset = set(refs or ())
     used = 0
+    used_refs = 0
     # Log-referenced files first, then code, then everything else: real
     # repositories carry CI configs, lockfiles and docs that sort before src/
     # and tests/, and those would otherwise eat the whole budget before the
@@ -117,6 +288,25 @@ def render_files(
 
     for rel in sorted(files, key=_budget_rank):
         content = files[rel]
+        if rel in refset and refs_full_file_chars > 0:
+            # Fallback mode: log-referenced files get their own larger budget -
+            # they are the files the model must actually fix.
+            if len(content) > refs_full_file_chars:
+                skipped.append(
+                    f"{rel} (referenced by the log; {len(content)} chars over "
+                    "the fallback per-file budget)"
+                )
+                continue
+            block = f"--- {rel} ---\n{content}\n"
+            cap_total = refs_full_total_chars or max_total_chars
+            if used_refs + len(block) > cap_total:
+                skipped.append(
+                    f"{rel} (referenced by the log; over the fallback total budget)"
+                )
+                continue
+            blocks.append(block)
+            used_refs += len(block)
+            continue
         if len(content) > max_file_chars:
             skipped.append(f"{rel} (too large: {len(content)} chars)")
             continue
@@ -151,7 +341,15 @@ def build_prompt(
     refs: list[str] | None = None,
     max_file_chars: int = MAX_FILE_CHARS,
     max_total_chars: int = MAX_TOTAL_FILES_CHARS,
+    occurrences_block: str | None = None,
+    refs_full: bool = False,
 ) -> str:
+    if occurrences_block is None:
+        # Direct callers (tests, generate_hypotheses) get the scan for free;
+        # the pipeline computes it separately so it can also record the notes.
+        scan = defect_scan(log, files, refs)
+        occurrences_block = scan.block
+        refs_full = scan.fallback
     prompt = PROMPT_TEMPLATE.format(
         n=n,
         repo=repo,
@@ -162,7 +360,10 @@ def build_prompt(
             max_file_chars=max_file_chars,
             max_total_chars=max_total_chars,
             refs=refs,
+            refs_full_file_chars=REFS_FALLBACK_FILE_CHARS if refs_full else 0,
+            refs_full_total_chars=REFS_FALLBACK_TOTAL_CHARS if refs_full else 0,
         ),
+        occurrences_block=occurrences_block,
     )
     if research_block:
         prompt += "\n" + research_block.rstrip() + "\n"

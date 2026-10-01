@@ -61,7 +61,12 @@ fixes race on forked branches through a git-style sandbox abstraction
    concrete edit plan. Files the failure log points at are rendered first in
    the prompt, and the prompt size caps are adjustable (`--max-file-chars`,
    `--max-total-chars`) for repositories whose failing module outweighs the
-   default budget.
+   default budget. When the log names the failing access (e.g. a missing dict
+   key), every occurrence of it in the log-referenced files is machine-scanned
+   into the prompt with a rule that each hypothesis must cover all of them; if
+   no such signature exists, those files fall back to a larger budget instead
+   of being dropped by the cap (live evidence: a 32k-char file was skipped and
+   all branches missed the other sites).
 4. **Fork & race** - the sandbox state is forked into three branches; each
    applies its edit (exact string match first, with a bounded fallback that
    tolerates blank-line / trailing-space drift only when the match is unique)
@@ -99,7 +104,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model replies for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 201 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 214 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be

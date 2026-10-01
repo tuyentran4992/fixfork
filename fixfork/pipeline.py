@@ -13,6 +13,7 @@ from .hypotheses import (
     PARSE_FAILURE,
     HypothesisError,
     build_prompt,
+    defect_scan,
     extract_refs,
     loads_json_tolerant,
     parse_edit_object,
@@ -143,6 +144,8 @@ def run_pipeline(
             report.notes.append(f"web research skipped: {exc}")
             sink.emit("research_failed", query=query, error=str(exc)[:160])
 
+    scan = defect_scan(log, base_files, refs)
+    report.notes.extend(scan.notes)
     try:
         reply = router.complete(
             "reason",
@@ -156,6 +159,8 @@ def run_pipeline(
                 refs=refs,
                 max_file_chars=max_file_chars,
                 max_total_chars=max_total_chars,
+                occurrences_block=scan.block,
+                refs_full=scan.fallback,
             ),
         )
     except RouterError as exc:
