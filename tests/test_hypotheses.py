@@ -59,14 +59,47 @@ class ParseHypothesesTest(unittest.TestCase):
         with self.assertRaises(HypothesisError):
             parse_hypotheses(json.dumps(items), n=2)
 
-    def test_noop_edit_rejected(self):
+    def test_noop_edit_dropped_keeps_rest_of_reply(self):
+        # shaped after a live race (02/10): one junk no-op edit (find ==
+        # replace, whose find did not even exist in the target file) used to
+        # reject the WHOLE reply - three hypotheses - and zero branches raced.
+        # This fixture is the same shape in miniature: the all-noop hypothesis
+        # is dropped, the clean one still races.
         edit = {"file": "src/tax.py", "find": "x = 1", "replace": "x = 1"}
         items = [
             {"title": "Noop", "rationale": "a", "edits": [edit]},
             {"title": "Fine", "rationale": "b", "edits": [DEMO_HYPOTHESES[0]["edits"][0]]},
         ]
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(json.dumps(items), n=2, notes=notes)
+        self.assertEqual([h.title for h in hypotheses], ["Fine"])
+        self.assertTrue(any("no-op" in n for n in notes), notes)
+
+    def test_noop_edit_stripped_hypothesis_survives(self):
+        good = DEMO_HYPOTHESES[0]["edits"][0]
+        noop = {"file": "src/tax.py", "find": "y = 2", "replace": "y = 2"}
+        items = [
+            {"title": "Mixed", "rationale": "a", "edits": [good, noop]},
+            {"title": "Second", "rationale": "b", "edits": [DEMO_HYPOTHESES[1]["edits"][0]]},
+        ]
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(json.dumps(items), n=2, notes=notes)
+        self.assertEqual([h.title for h in hypotheses], ["Mixed", "Second"])
+        self.assertEqual(len(hypotheses[0].edits), 1)
+        self.assertTrue(any("1 unchanged edit(s) removed" in n for n in notes), notes)
+
+    def test_all_noop_reply_rejected(self):
+        # nothing real to race -> the strict rejection still applies; the note
+        # must survive on the caller's list so the reason stays auditable
+        noop = {"file": "src/tax.py", "find": "x = 1", "replace": "x = 1"}
+        items = [
+            {"title": "Noop A", "rationale": "a", "edits": [noop]},
+            {"title": "Noop B", "rationale": "b", "edits": [dict(noop)]},
+        ]
+        notes: list[str] = []
         with self.assertRaises(HypothesisError):
-            parse_hypotheses(json.dumps(items), n=2)
+            parse_hypotheses(json.dumps(items), n=2, notes=notes)
+        self.assertTrue(any("2 hypothesis(es) dropped" in n for n in notes), notes)
 
     def test_non_string_fields_rejected_not_coerced(self):
         # str() coercion used to turn None into the literal word "None" written
@@ -141,6 +174,16 @@ class ParseEditObjectTest(unittest.TestCase):
         self.assertEqual(edit.replace, "")
         with self.assertRaises(HypothesisError):
             parse_edit_object({"file": "a.py", "find": "x = 1", "replace": 5}, "t")
+
+    def test_noop_strict_by_default_drop_mode_returns_none(self):
+        # loop replies keep the strict default; only the diagnosis path
+        # (parse_hypotheses) opts into "drop" after the 02/10 measured race
+        noop = {"file": "a.py", "find": "x = 1", "replace": "x = 1"}
+        with self.assertRaises(HypothesisError):
+            parse_edit_object(noop, "t")
+        self.assertIsNone(parse_edit_object(noop, "t", on_noop="drop"))
+        with self.assertRaises(ValueError):
+            parse_edit_object(noop, "t", on_noop="bogus")
 
 
 class LoopReplyParseTest(unittest.TestCase):

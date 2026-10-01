@@ -582,27 +582,38 @@ def _require_text(value, where: str) -> str:
     return value
 
 
-def parse_edit_object(raw, where: str) -> Edit:
+def parse_edit_object(raw, where: str, on_noop: str = "raise") -> Edit | None:
     """Validate one edit object from a model reply.
 
     Shared by both reply paths - the diagnosis reply (parse_hypotheses) and the
     in-branch iteration reply (pipeline._parse_loop_edits) - so the strictness
     cannot drift between them. ``find`` is kept byte-exact (no strip): edits are
     applied by exact string match against the repository files.
+
+    ``on_noop`` handles the ``find == replace`` case (an edit that changes
+    nothing): "raise" (strict, default - loop replies) rejects the edit;
+    "drop" returns ``None`` so the caller can strip it and keep the rest of the
+    reply. Chosen for the diagnosis path after a measured race (02/10): ONE
+    junk no-op edit - whose ``find`` did not even exist in the target file -
+    made the parser throw away all three hypotheses and zero branches raced.
     """
+    if on_noop not in ("raise", "drop"):
+        raise ValueError(f"on_noop must be 'raise' or 'drop', got {on_noop!r}")
     if not isinstance(raw, dict):
         raise HypothesisError(f"{where} has a non-object edit")
     file = _require_text(raw.get("file"), f"{where} edit 'file'")
     find = _require_text(raw.get("find"), f"{where} edit 'find'")
     replace = raw.get("replace")
     # `replace` may be an empty string: that deletes `find` from the file
-    # (the no-op case `find == replace` is rejected below).
+    # (the no-op case `find == replace` is handled below).
     if not isinstance(replace, str):
         raise HypothesisError(
             f"{where} edit 'replace' must be a string, got {type(replace).__name__}"
         )
     edit = Edit(file=file.strip(), find=find, replace=replace)
     if edit.find == edit.replace:
+        if on_noop == "drop":
+            return None
         raise HypothesisError(f"{where} has a no-op edit")
     return edit
 
@@ -614,6 +625,11 @@ def parse_hypotheses(
     on_duplicates: str = "raise",
 ) -> list[Hypothesis]:
     """Parse the diagnosis reply into ``n`` hypotheses.
+
+    The reply must carry ``n`` hypotheses, but the RESULT may hold fewer: exact
+    duplicates collapse, and a hypothesis left with no real edit (every edit a
+    no-op, ``find == replace``) is dropped - each with a note. Only when
+    nothing usable remains is the reply rejected (``HypothesisError``).
 
     ``on_duplicates`` controls duplicate handling: "raise" (strict, default -
     duplicate titles or edit sets reject the whole reply) or "collapse" (keep
@@ -645,6 +661,8 @@ def parse_hypotheses(
         raise HypothesisError(f"expected {n} hypotheses, got {got}")
 
     hypotheses: list[Hypothesis] = []
+    dropped_noop = 0
+    dropped_hypotheses = 0
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             raise HypothesisError(f"hypothesis #{index} is not an object")
@@ -655,8 +673,32 @@ def parse_hypotheses(
         raw_edits = item.get("edits")
         if not isinstance(raw_edits, list) or not raw_edits:
             raise HypothesisError(f"hypothesis #{index} needs at least one edit")
-        edits = [parse_edit_object(raw, f"hypothesis #{index}") for raw in raw_edits]
+        edits: list[Edit] = []
+        for raw in raw_edits:
+            edit = parse_edit_object(raw, f"hypothesis #{index}", on_noop="drop")
+            if edit is None:
+                dropped_noop += 1
+            else:
+                edits.append(edit)
+        if not edits:
+            # every edit was a no-op: this hypothesis carries no real change to
+            # race - drop it, keep the rest of the reply (measured: rejecting
+            # the whole reply over one junk edit lost two healthy hypotheses)
+            dropped_hypotheses += 1
+            continue
         hypotheses.append(Hypothesis(id=index, title=title, rationale=rationale, edits=edits))
+
+    if (dropped_noop or dropped_hypotheses) and notes is not None:
+        # appended BEFORE the all-dropped raise below: this note is the only
+        # record of WHY the reply was rejected (callers keep their notes list)
+        notes.append(
+            f"no-op edits dropped: {dropped_noop} unchanged edit(s) removed, "
+            f"{dropped_hypotheses} hypothesis(es) dropped (find == replace)"
+        )
+    if not hypotheses:
+        raise HypothesisError(
+            "reply had no real edits: every edit was a no-op (find == replace)"
+        )
 
     if on_duplicates == "collapse":
         hypotheses = collapse_duplicates(hypotheses, notes=notes)
