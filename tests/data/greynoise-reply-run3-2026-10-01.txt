@@ -1,0 +1,126 @@
+
+[
+  {
+    "title": "Use safe dictionary access with .get() to handle missing classification key",
+    "rationale": "The code assumes the 'classification' key exists in the 'internet_scanner_intelligence' dictionary, but GreyNoise may omit this key for IPs not observed mass-scanning. Using .get() with default 'unknown' prevents KeyError while maintaining expected behavior.",
+    "edits": [
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        if data["internet_scanner_intelligence"]["classification"] == "benign":',
+        "replace": '        if data["internet_scanner_intelligence"].get("classification", "unknown") == "benign":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "unknown":',
+        "replace": '        elif data["internet_scanner_intelligence"].get("classification", "unknown") == "unknown":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "malicious":',
+        "replace": '        elif data["internet_scanner_intelligence"].get("classification", "unknown") == "malicious":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "suspicious":',
+        "replace": '        elif data["internet_scanner_intelligence"].get("classification", "unknown") == "suspicious":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        and (data["internet_scanner_intelligence"]["classification"] != "benign")',
+        "replace": '        and (data["internet_scanner_intelligence"].get("classification", "unknown") != "benign")'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '            + data["internet_scanner_intelligence"]["classification"]',
+        "replace": '            + data["internet_scanner_intelligence"].get("classification", "unknown")'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '            + data["internet_scanner_intelligence"]["classification"]',
+        "replace": '            + data["internet_scanner_intelligence"].get("classification", "unknown")'
+      }
+    ]
+  },
+  {
+    "title": "Add explicit key existence check with fallback before accessing classification",
+    "rationale": "Instead of assuming the key exists, explicitly check for its presence using 'in' operator and assign a default value to a temporary variable. This makes the fallback logic more visible and avoids repeated dictionary lookups.",
+    "edits": [
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        if data["internet_scanner_intelligence"]["classification"] == "benign":',
+        "replace": '        _class = data["internet_scanner_intelligence"].get("classification", "unknown")\\n        if _class == "benign":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "unknown":',
+        "replace": '        elif _class == "unknown":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "malicious":',
+        "replace": '        elif _class == "malicious":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "suspicious":',
+        "replace": '        elif _class == "suspicious":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        and (data["internet_scanner_intelligence"]["classification"] != "benign")',
+        "replace": '        and (_class != "benign")'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '            + data["internet_scanner_intelligence"]["classification"]',
+        "replace": '            + _class'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '            + data["internet_scanner_intelligence"]["classification"]',
+        "replace": '            + _class'
+      }
+    ]
+  },
+  {
+    "title": "Wrap classification access in try-except block to handle missing key gracefully",
+    "rationale": "Encapsulate the dictionary access in a try-except block to catch KeyError and provide a default value. This approach centralizes error handling and makes the fallback intention explicit while preserving original code structure.",
+    "edits": [
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        if data["internet_scanner_intelligence"]["classification"] == "benign":',
+        "replace": '        try:\\n            _class = data["internet_scanner_intelligence"]["classification"]\\n        except KeyError:\\n            _class = "unknown"\\n        if _class == "benign":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "unknown":',
+        "replace": '        elif _class == "unknown":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "malicious":',
+        "replace": '        elif _class == "malicious":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        elif data["internet_scanner_intelligence"]["classification"] == "suspicious":',
+        "replace": '        elif _class == "suspicious":'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '        and (data["internet_scanner_intelligence"]["classification"] != "benign")',
+        "replace": '        and (_class != "benign")'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '            + data["internet_scanner_intelligence"]["classification"]',
+        "replace": '            + _class'
+      },
+      {
+        "file": "internal-enrichment/greynoise/src/connector/connector.py",
+        "find": '            + data["internet_scanner_intelligence"]["classification"]',
+        "replace": '            + _class'
+      }
+    ]
+  }
+]

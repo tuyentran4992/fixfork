@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from typing import NamedTuple
@@ -497,8 +498,29 @@ class _ParseFailure:
 PARSE_FAILURE = _ParseFailure()
 
 
+def _parse_python_literal(raw: str):
+    """A reply whose structure is sound but written as a Python literal.
+
+    Live evidence (2026-10-01, greynoise run 3, fixfork dc5782a): the model
+    wrote every ``find``/``replace`` value with Python-style single quotes
+    (``'...'``), so strict JSON parsing aborted a live run whose reply already
+    covered all 7 defect sites. ``ast.literal_eval`` evaluates only literals -
+    no calls, no attributes, no names beyond True/False/None - and the input is
+    bounded by the completion budget; like every other repair path it is
+    accepted only when it parses, and the raw reply stays verbatim in the
+    report. Returns the value, or the PARSE_FAILURE sentinel.
+    """
+    text = raw.strip()
+    if not text or text[0] not in "[{":
+        return PARSE_FAILURE
+    try:
+        return ast.literal_eval(text)
+    except Exception:  # noqa: BLE001 - any parse failure just falls through
+        return PARSE_FAILURE
+
+
 def loads_json_tolerant(raw: str) -> tuple[object, int]:
-    """``json.loads`` with the bounded repair pass above.
+    """``json.loads`` with the bounded repair passes above.
 
     Returns ``(value, n_fixes)``; ``(PARSE_FAILURE, n)`` when even the repair
     fails. The failure marker is a distinct sentinel, NOT ``None``, because
@@ -508,6 +530,9 @@ def loads_json_tolerant(raw: str) -> tuple[object, int]:
         return json.loads(raw), 0
     except json.JSONDecodeError:
         pass
+    literal = _parse_python_literal(raw)
+    if literal is not PARSE_FAILURE:
+        return literal, 1
     repaired, fixes = repair_json_text(raw)
     if repaired is None:
         return PARSE_FAILURE, fixes
@@ -569,7 +594,7 @@ def parse_hypotheses(
         raise HypothesisError("hypothesis reply is not valid JSON")
     if repairs and notes is not None:
         notes.append(
-            f"hypothesis reply was lightly repaired ({repairs} JSON fix(es)) before parsing"
+            f"hypothesis reply was lightly repaired ({repairs} repair step(s)) before parsing"
         )
     if not isinstance(items, list) or len(items) != n:
         got = len(items) if isinstance(items, list) else type(items).__name__

@@ -282,5 +282,48 @@ class JsonRepairTest(unittest.TestCase):
         self.assertTrue(any("repaired" in note for note in notes))
 
 
+class PythonLiteralFallbackTest(unittest.TestCase):
+    """A structurally sound reply written as a Python literal parses.
+
+    Live evidence (2026-10-01, greynoise run 3, fixfork dc5782a): every
+    find/replace value used Python-style single quotes; strict JSON parsing
+    aborted a live run whose reply already covered all 7 defect sites
+    (data/greynoise-reply-run3-2026-10-01.txt).
+    """
+
+    def test_single_quoted_values_parse_as_one_repair_step(self):
+        reply = (
+            '[{"title": "t", "rationale": "r", "edits": [{"file": "a.py", '
+            '"find": \'old\', "replace": \'new\'}]}]'
+        )
+        value, steps = loads_json_tolerant(reply)
+        self.assertEqual(steps, 1)
+        assert isinstance(value, list)
+        self.assertEqual(value[0]["edits"][0]["find"], "old")
+
+    def test_real_run3_reply_yields_full_site_coverage(self):
+        reply = (
+            Path(__file__).parent / "data" / "greynoise-reply-run3-2026-10-01.txt"
+        ).read_text(encoding="utf-8")
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes)
+        self.assertEqual(len(hypotheses), 3)
+        for hypothesis in hypotheses:
+            # the machine scan listed 7 sites; the model covered all of them
+            self.assertEqual(len(hypothesis.edits), 7)
+        first = hypotheses[0].edits[0]
+        self.assertEqual(
+            first.find,
+            '        if data["internet_scanner_intelligence"]["classification"]'
+            ' == "benign":',
+        )
+        self.assertIn('.get("classification", "unknown")', first.replace)
+        self.assertTrue(any("repaired" in note for note in notes))
+
+    def test_python_literal_path_not_taken_for_prose(self):
+        value, _ = loads_json_tolerant("definitely not json")
+        self.assertIs(value, PARSE_FAILURE)
+
+
 if __name__ == "__main__":
     unittest.main()

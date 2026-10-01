@@ -80,7 +80,7 @@ def _parse_loop_edits(text: str, notes: list[str] | None = None) -> list[Edit]:
         # say so, or the report claims a clean parse that never happened
         # (soi chéo 01/10, aibox: loop-path repairs were applied silently).
         notes.append(
-            f"loop reply was lightly repaired ({repairs} JSON fix(es)) before parsing"
+            f"loop reply was lightly repaired ({repairs} repair step(s)) before parsing"
         )
     edits = data.get("edits")
     if not isinstance(edits, list):
