@@ -49,6 +49,17 @@ fixes race on forked branches through a git-style sandbox abstraction
 > ([PR #620](https://github.com/python-poetry/tomlkit/pull/620): +52/-1
 > across 2 files, 24/24 CI checks green).
 
+> **Multi-site result** (2026-10-01): run against a live upstream issue,
+> OpenCTI-Platform/connectors #7778 (greynoise connector - a missing
+> `classification` field). The third live run on the case fixed all seven
+> occurrences of the unguarded access in one file on its own: all three
+> branches of the race went green (11/11 tests) and the exported patch
+> re-applied cleanly on a pristine fixture (3 failed / 8 passed -> 11 passed).
+> A fix for the same issue, completed by hand from FixFork's run report,
+> is submitted as
+> [PR #7821](https://github.com/OpenCTI-Platform/connectors/pull/7821)
+> (signed commit, GitHub-verified; automated review recommends approval).
+
 ## How it works
 
 1. **Baseline** - run the failing test; confirm it is red.
