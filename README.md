@@ -83,8 +83,15 @@ fixes race on forked branches through a git-style sandbox abstraction
    key), every occurrence of it in the log-referenced files is machine-scanned
    into the prompt with a rule that each hypothesis must cover all of them; if
    no such signature exists, those files fall back to a larger budget instead
-   of being dropped by the cap (live evidence: a 32k-char file was skipped and
-   all branches missed the other sites).
+   of being dropped by the cap - an explicitly raised budget is never lowered
+   by that fallback, and the total is raised to fit at least the per-file
+   budget (live evidence: a 32k-char file was skipped and all branches missed
+   the other sites; a 74k-char referenced file was dropped even with a raised
+   cap until this was fixed). Every hypothesis must also be a *complete* fix
+   for its own explanation: coordinated edits (a caller passing the value, the
+   class accepting it, related methods staying consistent) belong to the same
+   hypothesis - not split across hypotheses (live evidence: one multi-location
+   fix split into three partial hypotheses left every branch red).
 4. **Fork & race** - the sandbox state is forked into three branches; each
    applies its edit (exact string match first, with a bounded fallback that
    tolerates blank-line / trailing-space drift only when the match is unique)
@@ -122,7 +129,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model replies for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 233 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 237 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be

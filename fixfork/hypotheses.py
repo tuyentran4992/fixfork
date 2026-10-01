@@ -23,6 +23,14 @@ below and propose {n} DIVERGENT root-cause hypotheses: each must be a different
 kind of explanation (not three variations of the same guess) and must come with
 concrete edits.
 
+Each hypothesis must be a COMPLETE fix for its own explanation - if the repair
+requires coordinated changes (a caller must pass the value AND the class or
+function must accept it AND related methods must stay consistent), all of those
+edits belong in the SAME hypothesis, and only the edits that its own
+explanation needs. Do not split one explanation's edits across hypotheses:
+every branch runs the whole test suite, so a hypothesis that covers only part
+of its own fix is red anyway.
+
 Reply with ONLY a JSON array, no prose, no markdown fences. Each element:
 {{"title": "...", "rationale": "...", "edits": [{{"file": "path/relative/to/repo", "find": "exact existing text", "replace": "replacement text"}}]}}
 
@@ -361,8 +369,27 @@ def build_prompt(
             max_file_chars=max_file_chars,
             max_total_chars=max_total_chars,
             refs=refs,
-            refs_full_file_chars=REFS_FALLBACK_FILE_CHARS if refs_full else 0,
-            refs_full_total_chars=REFS_FALLBACK_TOTAL_CHARS if refs_full else 0,
+            # The fallback budget for log-referenced files is an UPGRADE,
+            # never a downgrade: take the max against the caller's caps so
+            # an explicitly raised --max-file-chars/--max-total-chars is
+            # respected, and couple the total to the per-file value so a
+            # file the caller made room for is not dropped by a total cap
+            # they did not touch. Measured: tomlkit #619's 74,167-char
+            # items.py was dropped even with --max-file-chars 100000 because
+            # the fallback caps overrode the explicit budget, hiding the file
+            # the fix must edit.
+            refs_full_file_chars=(
+                max(max_file_chars, REFS_FALLBACK_FILE_CHARS) if refs_full else 0
+            ),
+            refs_full_total_chars=(
+                max(
+                    max_total_chars,
+                    REFS_FALLBACK_TOTAL_CHARS,
+                    max(max_file_chars, REFS_FALLBACK_FILE_CHARS),
+                )
+                if refs_full
+                else 0
+            ),
         ),
         occurrences_block=occurrences_block,
     )
