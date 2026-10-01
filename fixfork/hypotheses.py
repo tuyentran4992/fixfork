@@ -373,11 +373,12 @@ def build_prompt(
             # never a downgrade: take the max against the caller's caps so
             # an explicitly raised --max-file-chars/--max-total-chars is
             # respected, and couple the total to the per-file value so a
-            # file the caller made room for is not dropped by a total cap
-            # they did not touch. Measured: tomlkit #619's 74,167-char
-            # items.py was dropped even with --max-file-chars 100000 because
-            # the fallback caps overrode the explicit budget, hiding the file
-            # the fix must edit.
+            # referenced file the caller made room for is not dropped by a
+            # total cap they did not touch. Found while preparing the tomlkit
+            # #619 re-run: in fallback mode a referenced file above the 48k
+            # fallback cap was dropped even when the caller raised the cap
+            # (the tomlkit items.py itself is not log-referenced - it renders
+            # through the normal caps, which the raised flags cover).
             refs_full_file_chars=(
                 max(max_file_chars, REFS_FALLBACK_FILE_CHARS) if refs_full else 0
             ),

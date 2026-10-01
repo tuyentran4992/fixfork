@@ -86,8 +86,7 @@ fixes race on forked branches through a git-style sandbox abstraction
    of being dropped by the cap - an explicitly raised budget is never lowered
    by that fallback, and the total is raised to fit at least the per-file
    budget (live evidence: a 32k-char file was skipped and all branches missed
-   the other sites; a 74k-char referenced file was dropped even with a raised
-   cap until this was fixed). Every hypothesis must also be a *complete* fix
+   the other sites). Every hypothesis must also be a *complete* fix
    for its own explanation: coordinated edits (a caller passing the value, the
    class accepting it, related methods staying consistent) belong to the same
    hypothesis - not split across hypotheses (live evidence: one multi-location

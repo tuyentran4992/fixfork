@@ -192,10 +192,9 @@ class BuildPromptTest(unittest.TestCase):
         self.assertIn(big, prompt)
 
     def test_refs_fallback_respects_raised_user_budget(self):
-        # Measured regression (tomlkit #619): with no signature in the log the
-        # fallback cap (48k) overrode an explicit --max-file-chars 100000 and
-        # dropped the 74,167-char items.py the fix must edit. A raised user
-        # budget must never be downgraded by the fallback.
+        # Pins the rule that a raised user budget is never downgraded by the
+        # fallback (found while preparing the tomlkit #619 re-run; the
+        # referenced-file scenario here is synthesized to pin the behavior).
         big = "x" * 74167
         files = {"tomlkit/items.py": big}
         log = "assert 0 == 1\n  where 0 = Time(12, 34, 56).fold"
