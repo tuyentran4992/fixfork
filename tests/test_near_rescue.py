@@ -162,9 +162,12 @@ class NearLocateTest(unittest.TestCase):
         # delta did not touch the typo'd call line -> the file's own line stays
         self.assertIn("            microsecond,\n", merged)
 
-    def test_delta_touching_a_slipped_line_takes_the_replacement(self):
-        # When the model DID rewrite the drifted line itself, its replacement
-        # wins (that is what "apply the delta" means); pin it explicitly.
+    def test_delta_rewriting_a_slipped_line_is_refused(self):
+        # A rewrite (or delete) covering a line the model's copy slipped on
+        # refuses the merge: the model authored that text against a base it
+        # never saw correctly, so the new text may embed the slip (the
+        # recorded race-2c reply carried its ':'->',' slip into a rewritten
+        # call line). Verified merges only - never applied at a guessed base.
         f = FIND_TYPO
         r = REPLACE_TYPO.replace(
             "            microsecond:\n", "            microsecond,\n"
@@ -174,10 +177,21 @@ class NearLocateTest(unittest.TestCase):
         assert span is not None
         start, end, mode = span
         self.assertEqual(mode, "near")
-        merged = corrected_replace(r, mode, find=f, span_text=SIGNATURE_FILE[start:end])
-        assert merged is not None
-        self.assertIn("            microsecond,\n", merged)
-        self.assertNotIn("            microsecond:\n", merged)
+        self.assertIsNone(
+            corrected_replace(r, mode, find=f, span_text=SIGNATURE_FILE[start:end])
+        )
+
+    def test_delta_deleting_a_slipped_line_is_refused(self):
+        f = FIND_TYPO
+        r = REPLACE_TYPO.replace("            microsecond:\n", "")
+        span = locate_edit(SIGNATURE_FILE, f)
+        self.assertIsNotNone(span)
+        assert span is not None
+        start, end, mode = span
+        self.assertEqual(mode, "near")
+        self.assertIsNone(
+            corrected_replace(r, mode, find=f, span_text=SIGNATURE_FILE[start:end])
+        )
 
     def test_ambiguous_near_windows_are_refused(self):
         block = DATETIME_FILE.split("\n")[3:16]

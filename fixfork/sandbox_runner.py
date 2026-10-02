@@ -232,10 +232,11 @@ def near_locate(content: str, find: str) -> tuple[int, int, str] | None:
     window with the same raw line count and keeps windows whose copy slip is
     small: at most ``NEAR_MAX_SLIP_LINES`` of its lines differ from the block
     and each differing line still scores at least ``NEAR_MIN_SLIP_SIM``
-    against its counterpart. Whitespace-only drift (a line that is
-    lstrip-equal to its counterpart) is NOT rescued here - that class is
-    owned by the bounded uniform-indent pass above and must keep refusing
-    beyond its bound. The best-scoring surviving window is accepted only when
+    against its counterpart. Lines that differ only in trailing whitespace
+    count as equal, never as slips; leading-whitespace-only drift (a line
+    that is lstrip-equal to its counterpart) is NOT rescued here - that
+    class is owned by the bounded uniform-indent pass above and must keep
+    refusing beyond its bound. The best-scoring surviving window is accepted only when
     its score reaches ``NEAR_MIN_SCORE`` and leads every non-overlapping
     competing window (the best candidate if none) by ``NEAR_MIN_MARGIN``.
     More than ``NEAR_MAX_CANDIDATES`` qualifying windows mean a
@@ -365,13 +366,24 @@ def merge_near_delta(find: str, replace: str, span_text: str) -> str | None:
     from a datetime conversion the model never intended to touch. Instead the
     diff between find and replace is applied line-for-line onto the span:
     equal lines keep the file's own text, changed lines take the replacement.
-    Returns ``None`` when the shapes do not line up.
+
+    A line the copy SLIPPED on refuses the whole merge (``None``) whenever
+    the delta rewrites or deletes it: the model wrote that text against a
+    base it never saw correctly, so the new text may embed the slip (the
+    recorded race-2c reply carried its ':'->',' slip into a rewritten call
+    line) and cannot be verified - never applied at a guessed base. Returns
+    ``None`` when the shapes do not line up.
     """
     find_lines = find.split("\n")
     span_lines = span_text.split("\n")
     if not find_lines or len(find_lines) != len(span_lines):
         return None
     replace_lines = replace.split("\n")
+    slipped = {
+        k
+        for k in range(len(find_lines))
+        if find_lines[k].rstrip() != span_lines[k].rstrip()
+    }
     matcher = difflib.SequenceMatcher(
         None, find_lines, replace_lines, autojunk=False
     )
@@ -379,9 +391,27 @@ def merge_near_delta(find: str, replace: str, span_text: str) -> str | None:
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             merged.extend(span_lines[i1:i2])
-        elif tag in ("replace", "insert"):
+            continue
+        if tag in ("replace", "delete") and any(
+            k in slipped for k in range(i1, i2)
+        ):
+            return None
+        if tag in ("replace", "insert"):
             merged.extend(replace_lines[j1:j2])
     return "\n".join(merged)
+
+
+def _refusal_detail(mode: str) -> str:
+    """Human-readable reason ``corrected_replace`` returned ``None``."""
+    if mode == "near":
+        return (
+            "near-miss rescue refused: the replacement rewrites or deletes "
+            "a line the model's copy slipped on"
+        )
+    return (
+        f"indent shift {mode!r} is larger than the replacement's own "
+        "indentation"
+    )
 
 
 def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
@@ -419,10 +449,7 @@ def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
             edit.replace, mode, find=edit.find, span_text=content[start:end]
         )
         if replace is None:
-            return [
-                f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
-                "is larger than the replacement's own indentation"
-            ]
+            return [f"edit apply refused in {edit.file!r}: {_refusal_detail(mode)}"]
         work[edit.file] = content[:start] + replace + content[end:]
     return []
 
@@ -495,8 +522,7 @@ class LocalSandbox:
             )
             if replace is None:
                 raise SandboxError(
-                    f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
-                    "is larger than the replacement's own indentation"
+                    f"edit apply refused in {edit.file!r}: {_refusal_detail(mode)}"
                 )
             target.write_text(
                 content[:start] + replace + content[end:], encoding="utf-8"
@@ -802,8 +828,7 @@ class NebiusSandbox:
             )
             if replace is None:
                 raise SandboxError(
-                    f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
-                    "is larger than the replacement's own indentation"
+                    f"edit apply refused in {edit.file!r}: {_refusal_detail(mode)}"
                 )
             pending[edit.file] = content[:start] + replace + content[end:]
             changed_lines += edit.find.count("\n") + 1
