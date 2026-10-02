@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import shutil
@@ -113,6 +114,26 @@ def _iter_text_files(root: Path):
 # parentheses (17 vs 12 spaces) - allow up to two indent levels of slip.
 MAX_INDENT_SHIFT = 8
 
+# Bounds for the near-miss copy rescue (see ``near_locate``). Measured live on
+# race 2c (2026-10-02): of 30 edit blocks in one model reply, 4 were near-miss
+# copies of real file text in two shapes - a long line truncated
+# (``value.isoformat(),`` for ``value.isoformat().replace("+00:00", "Z"),``)
+# and a ':' written where the file has ','. The all-or-nothing pre-flight
+# refused every branch carrying such a slip, so two whole branches never got
+# to run. The rescue accepts a window only when the machine is sure: the
+# block has at least NEAR_MIN_BLOCK_LINES lines, at most
+# NEAR_MAX_SLIP_LINES drifted lines each still at least NEAR_MIN_SLIP_SIM
+# similar, a score of NEAR_MIN_SCORE, and a NEAR_MIN_MARGIN lead over the
+# best non-overlapping competing window. Anything else is refused, never
+# guessed at.
+NEAR_MIN_BLOCK_LINES = 2
+NEAR_MAX_BLOCK_LINES = 200
+NEAR_MAX_CANDIDATES = 200
+NEAR_MIN_SCORE = 0.90
+NEAR_MIN_MARGIN = 0.05
+NEAR_MAX_SLIP_LINES = 2
+NEAR_MIN_SLIP_SIM = 0.5
+
 
 def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
     """Locate the span ``find`` covers in ``content``; ``None`` when not found.
@@ -128,7 +149,7 @@ def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
     several candidates return ``None`` so ambiguity is never resolved
     silently.
 
-    Last resort (mode ``"indent±K"``): the model's block is byte-identical
+    Second fallback (mode ``"indent±K"``): the model's block is byte-identical
     after lstrip on every non-blank line, shifted by ONE uniform leading-space
     offset K (measured live 2026-10-01, run 3: most lines carried one extra
     leading space and one continuation line inside parens carried five - the
@@ -138,6 +159,12 @@ def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
     in order. Callers shift the replacement by the same K
     (``corrected_replace``) so the applied block keeps the file's own
     indentation. |K| is bounded by ``MAX_INDENT_SHIFT``.
+
+    Final resort (mode ``"near"``): the block is a near-miss COPY of real
+    file text (a slip while copying); rescued only under ``near_locate``'s
+    guards below, and the replacement must merge the model's find->replace
+    delta onto the real text (``merge_near_delta``) instead of overwriting
+    the file's own wording where the model changed nothing.
     """
     pos = content.find(find)
     if pos != -1:
@@ -193,11 +220,109 @@ def locate_edit(content: str, find: str) -> tuple[int, int, str] | None:
             starts[window[-1]] + len(lines[window[-1]]),
             f"indent{shift:+d}",
         )
-    return None
+
+    # Final resort: the block may be a near-miss copy of real file text.
+    return near_locate(content, find)
 
 
-def corrected_replace(replace: str, mode: str) -> str | None:
-    """Replacement adjusted for the indent shift ``locate_edit`` accepted.
+def near_locate(content: str, find: str) -> tuple[int, int, str] | None:
+    """Rescue a block that is a NEAR-MISS copy of real file text; else ``None``.
+
+    Runs only after every stricter match failed. Scans every consecutive
+    window with the same raw line count and keeps windows whose copy slip is
+    small: at most ``NEAR_MAX_SLIP_LINES`` of its lines differ from the block
+    and each differing line still scores at least ``NEAR_MIN_SLIP_SIM``
+    against its counterpart. Whitespace-only drift (a line that is
+    lstrip-equal to its counterpart) is NOT rescued here - that class is
+    owned by the bounded uniform-indent pass above and must keep refusing
+    beyond its bound. The best-scoring surviving window is accepted only when
+    its score reaches ``NEAR_MIN_SCORE`` and leads every non-overlapping
+    competing window (the best candidate if none) by ``NEAR_MIN_MARGIN``.
+    More than ``NEAR_MAX_CANDIDATES`` qualifying windows mean a
+    pathologically repetitive file: refuse. Anything short of the guards is
+    refused - the edit is never applied at a guessed location.
+
+    Measured live (race 2c, 2026-10-02): both recorded slip shapes (a
+    truncated long line and a ':' for ',') are rescued; score/margin numbers
+    in ``bao-cao/race-tomlkit-02-10c/verify-near-rescue.txt``.
+    """
+    find_lines = find.split("\n")
+    span = len(find_lines)
+    if span < NEAR_MIN_BLOCK_LINES or span > NEAR_MAX_BLOCK_LINES:
+        return None
+    lines = content.split("\n")
+    if span > len(lines):
+        return None
+    find_stripped = [line.rstrip() for line in find_lines]
+    if not any(line.strip() for line in find_lines):
+        return None
+    starts: list[int] = []
+    offset = 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line) + 1
+    candidates: list[tuple[float, int]] = []
+    for i in range(len(lines) - span + 1):
+        window = [line.rstrip() for line in lines[i : i + span]]
+        slips = 0
+        clean = True
+        for want, got in zip(find_stripped, window):
+            if want == got:
+                continue
+            if want.lstrip() == got.lstrip():
+                # Whitespace-only drift: the bounded uniform-indent pass
+                # above owns that class; beyond its bound it must keep
+                # refusing rather than get rescued here.
+                clean = False
+                break
+            slips += 1
+            if slips > NEAR_MAX_SLIP_LINES or (
+                difflib.SequenceMatcher(None, want, got).ratio()
+                < NEAR_MIN_SLIP_SIM
+            ):
+                clean = False
+                break
+        if not clean:
+            continue
+        score = difflib.SequenceMatcher(
+            None, "\n".join(find_stripped), "\n".join(window)
+        ).ratio()
+        candidates.append((score, i))
+        if len(candidates) > NEAR_MAX_CANDIDATES:
+            return None
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (-c[0], c[1]))
+    best_score, best_i = candidates[0]
+    second = 0.0
+    for score, i in candidates[1:]:
+        if abs(i - best_i) >= span and score > second:
+            second = score
+    if best_score < NEAR_MIN_SCORE:
+        return None
+    if second and best_score - second < NEAR_MIN_MARGIN:
+        return None
+    return (
+        starts[best_i],
+        starts[best_i + span - 1] + len(lines[best_i + span - 1]),
+        "near",
+    )
+
+
+def corrected_replace(
+    replace: str,
+    mode: str,
+    find: str | None = None,
+    span_text: str | None = None,
+) -> str | None:
+    """Replacement adjusted for the match ``locate_edit`` accepted.
+
+    ``mode == "near"`` (a near-miss copy was rescued): ``find`` and
+    ``span_text`` (the real file text the span covers) are required; the
+    replacement is the model's find->replace delta merged onto the real text
+    (see ``merge_near_delta``). Returns ``None`` when the inputs are missing
+    or cannot be merged safely, so callers refuse the edit instead of
+    guessing.
 
     ``mode == "indent+K"`` means the model's block has K more leading spaces
     per line than the file: K spaces are removed from every non-blank line of
@@ -207,6 +332,10 @@ def corrected_replace(replace: str, mode: str) -> str | None:
     spaces than a positive shift - so callers refuse the edit instead of
     guessing.
     """
+    if mode == "near":
+        if find is None or span_text is None:
+            return None
+        return merge_near_delta(find, replace, span_text)
     if not mode.startswith("indent"):
         return replace
     shift = int(mode[len("indent") :])
@@ -223,6 +352,36 @@ def corrected_replace(replace: str, mode: str) -> str | None:
         else:
             out.append(" " * (-shift) + line)
     return "\n".join(out)
+
+
+def merge_near_delta(find: str, replace: str, span_text: str) -> str | None:
+    """Apply the model's find->replace line delta onto the real file text.
+
+    The near rescue located the window the model MEANT; its ``find`` copy may
+    differ from the file on a line or two (that is why the rescue ran).
+    Replacing the whole span with the model's block would rewrite those
+    drifted lines with the model's possibly stale wording - measured live on
+    race 2c, that would have silently dropped ``.replace("+00:00", "Z")``
+    from a datetime conversion the model never intended to touch. Instead the
+    diff between find and replace is applied line-for-line onto the span:
+    equal lines keep the file's own text, changed lines take the replacement.
+    Returns ``None`` when the shapes do not line up.
+    """
+    find_lines = find.split("\n")
+    span_lines = span_text.split("\n")
+    if not find_lines or len(find_lines) != len(span_lines):
+        return None
+    replace_lines = replace.split("\n")
+    matcher = difflib.SequenceMatcher(
+        None, find_lines, replace_lines, autojunk=False
+    )
+    merged: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            merged.extend(span_lines[i1:i2])
+        elif tag in ("replace", "insert"):
+            merged.extend(replace_lines[j1:j2])
+    return "\n".join(merged)
 
 
 def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
@@ -256,7 +415,9 @@ def preflight_edits(files: dict[str, str], edits: list[Edit]) -> list[str]:
             snippet = lines[0][:60] if lines else ""
             return [f"edit target not found in {edit.file!r}: {snippet!r}"]
         start, end, mode = span
-        replace = corrected_replace(edit.replace, mode)
+        replace = corrected_replace(
+            edit.replace, mode, find=edit.find, span_text=content[start:end]
+        )
         if replace is None:
             return [
                 f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
@@ -329,7 +490,9 @@ class LocalSandbox:
                     f"edit target not found in {edit.file!r}: {edit.find!r}"
                 )
             start, end, mode = span
-            replace = corrected_replace(edit.replace, mode)
+            replace = corrected_replace(
+                edit.replace, mode, find=edit.find, span_text=content[start:end]
+            )
             if replace is None:
                 raise SandboxError(
                     f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
@@ -634,7 +797,9 @@ class NebiusSandbox:
             if span is None:
                 raise SandboxError(f"edit target not found in {edit.file!r}: {edit.find!r}")
             start, end, mode = span
-            replace = corrected_replace(edit.replace, mode)
+            replace = corrected_replace(
+                edit.replace, mode, find=edit.find, span_text=content[start:end]
+            )
             if replace is None:
                 raise SandboxError(
                     f"edit apply refused in {edit.file!r}: indent shift {mode!r} "
