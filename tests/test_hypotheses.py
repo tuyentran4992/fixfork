@@ -413,5 +413,89 @@ class PythonLiteralFallbackTest(unittest.TestCase):
         self.assertIs(value, PARSE_FAILURE)
 
 
+class BareEditListRescueTest(unittest.TestCase):
+    """A flat array of bare edits rescues as ONE hypothesis (real reply 02/10).
+
+    Live evidence (2026-10-02, race tomlkit run 2b, fixfork 446bc1d): the
+    diagnosis reply was a flat JSON array of 10 bare edit objects with no
+    hypothesis wrapper; the strict count check rejected the whole reply
+    ("expected 3 hypotheses, got 10") and zero branches raced.
+    """
+
+    def test_real_flatlist_reply_rescues_all_edits(self):
+        reply = (
+            Path(__file__).parent / "data" / "tomlkit-reply-flatlist-2026-10-02.json"
+        ).read_text(encoding="utf-8")
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes, on_duplicates="collapse")
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 10)
+        self.assertTrue(any("flat edit list" in note for note in notes), notes)
+        for edit in hypotheses[0].edits:
+            # every kept edit is a REAL change (no no-op survived)
+            self.assertNotEqual(edit.find, edit.replace)
+
+    def test_flat_list_count_equal_to_n_still_one_hypothesis(self):
+        # the rescue is about SHAPE, not count: an all-edit array is one fix
+        edits = [
+            {"file": "a.py", "find": "x = 1", "replace": "x = 2"},
+            {"file": "a.py", "find": "y = 1", "replace": "y = 2"},
+        ]
+        hypotheses = parse_hypotheses(json.dumps(edits), n=2)
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 2)
+
+    def test_flat_list_with_noop_drops_it_with_note(self):
+        good = {"file": "src/tax.py", "find": "x = 1", "replace": "x = 2"}
+        noop = {"file": "src/tax.py", "find": "y = 2", "replace": "y = 2"}
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(json.dumps([good, noop]), n=3, notes=notes)
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 1)
+        self.assertTrue(any("1 no-op edit(s) dropped" in note for note in notes), notes)
+
+    def test_all_noop_flat_list_rejected_note_survives(self):
+        noop = {"file": "src/tax.py", "find": "x = 1", "replace": "x = 1"}
+        notes: list[str] = []
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(json.dumps([noop, dict(noop)]), n=3, notes=notes)
+        self.assertTrue(any("flat edit list" in note for note in notes), notes)
+
+    def test_mixed_shapes_still_rejected(self):
+        wrapped = {
+            "title": "t", "rationale": "r",
+            "edits": [{"file": "a.py", "find": "x", "replace": "y"}],
+        }
+        bare = {"file": "a.py", "find": "x", "replace": "y"}
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(json.dumps([wrapped, bare]), n=2)
+
+    def test_non_string_bare_edit_rejected_as_hypothesis_error(self):
+        for bad in (
+            {"file": 123, "find": "x", "replace": "y"},
+            {"file": "a.py", "find": 123, "replace": "y"},
+            {"file": "a.py", "find": "x", "replace": 123},
+        ):
+            with self.assertRaises(HypothesisError):
+                parse_hypotheses(json.dumps([bad]), n=3)
+
+    def test_envelope_keyed_item_not_treated_as_bare_edit(self):
+        # an object that carries hypothesis-envelope keys is never silently
+        # stripped down to its file/find/replace (soi chéo 02/10); a list of
+        # such objects is not a flat edit list and still rejects
+        hybrid = {
+            "title": "t", "rationale": "r",
+            "file": "a.py", "find": "x", "replace": "y",
+        }
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(json.dumps([hybrid]), n=1)
+
+    def test_single_bare_edit_is_one_hypothesis(self):
+        edit = {"file": "a.py", "find": "x = 1", "replace": "x = 2"}
+        hypotheses = parse_hypotheses(json.dumps([edit]), n=3)
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

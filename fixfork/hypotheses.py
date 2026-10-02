@@ -618,6 +618,68 @@ def parse_edit_object(raw, where: str, on_noop: str = "raise") -> Edit | None:
     return edit
 
 
+def _is_bare_edit_list(items: list) -> bool:
+    """True when every element is a bare edit object - no hypothesis wrapper.
+
+    A bare edit carries exactly the edit keys (``file``/``find``/``replace``)
+    and NO hypothesis-envelope keys (``edits``/``title``/``rationale``) - so
+    metadata is never silently stripped. Measured on a real diagnosis reply
+    (02/10/2026): the model returned its edits directly, as a flat array, and
+    the strict count check threw the entire fix away.
+    """
+    if not items:
+        return False
+    for item in items:
+        if not isinstance(item, dict):
+            return False
+        if any(key in item for key in ("edits", "title", "rationale")):
+            return False
+        if not all(key in item for key in ("file", "find", "replace")):
+            return False
+    return True
+
+
+def _parse_bare_edits(items: list, notes: list[str] | None) -> list[Hypothesis]:
+    """Rescue a flat array of bare edits as ONE hypothesis (measured 02/10/2026).
+
+    The no-op rules match the wrapper path: ``find == replace`` edits drop with
+    a note, and an all-no-op reply still rejects.
+    """
+    edits: list[Edit] = []
+    dropped_noop = 0
+    for index, raw in enumerate(items, start=1):
+        edit = parse_edit_object(raw, f"bare edit #{index}", on_noop="drop")
+        if edit is None:
+            dropped_noop += 1
+        else:
+            edits.append(edit)
+    if notes is not None:
+        # appended BEFORE the all-noop raise below: the note is the only record
+        # of WHY the reply was rejected (same rule as the wrapper path)
+        detail = f"{len(edits)} real edit(s) kept"
+        if dropped_noop:
+            detail += f", {dropped_noop} no-op edit(s) dropped"
+        notes.append(
+            f"reply carried a flat edit list (no hypothesis wrapper): "
+            f"rescued as ONE hypothesis ({detail})"
+        )
+    if not edits:
+        raise HypothesisError(
+            "reply had no real edits: every edit was a no-op (find == replace)"
+        )
+    return [
+        Hypothesis(
+            id=1,
+            title="(recovered) flat edit list",
+            rationale=(
+                "The reply carried its edits directly, without the hypothesis "
+                "wrapper; parsed as one complete fix."
+            ),
+            edits=edits,
+        )
+    ]
+
+
 def parse_hypotheses(
     text: str,
     n: int = 3,
@@ -630,6 +692,13 @@ def parse_hypotheses(
     duplicates collapse, and a hypothesis left with no real edit (every edit a
     no-op, ``find == replace``) is dropped - each with a note. Only when
     nothing usable remains is the reply rejected (``HypothesisError``).
+
+    Exception: a reply shaped as a flat array of bare edits (``file``/``find``/
+    ``replace`` objects, no hypothesis envelope) is RESCUED as a single
+    hypothesis holding all of its edits - measured with a real model reply
+    (02/10/2026): the whole fix was thrown away over the missing wrapper. Such
+    an array is rescued only when every element is edit-shaped; mixed shapes
+    and wrong counts of non-edit items still reject.
 
     ``on_duplicates`` controls duplicate handling: "raise" (strict, default -
     duplicate titles or edit sets reject the whole reply) or "collapse" (keep
@@ -656,9 +725,17 @@ def parse_hypotheses(
         notes.append(
             f"hypothesis reply was lightly repaired ({repairs} repair step(s)) before parsing"
         )
-    if not isinstance(items, list) or len(items) != n:
-        got = len(items) if isinstance(items, list) else type(items).__name__
-        raise HypothesisError(f"expected {n} hypotheses, got {got}")
+    if not isinstance(items, list):
+        raise HypothesisError(f"expected {n} hypotheses, got {type(items).__name__}")
+    if _is_bare_edit_list(items):
+        # Shape rescue (measured 02/10/2026, JEV p1, conf 1.00): the reply
+        # carried its edits directly - a flat array of {"file", "find",
+        # "replace"} objects with no hypothesis wrapper. One array = ONE
+        # hypothesis (a single complete fix); the fix still races instead of
+        # being thrown away over the missing envelope.
+        return _parse_bare_edits(items, notes)
+    if len(items) != n:
+        raise HypothesisError(f"expected {n} hypotheses, got {len(items)}")
 
     hypotheses: list[Hypothesis] = []
     dropped_noop = 0
