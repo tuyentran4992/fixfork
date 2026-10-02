@@ -97,7 +97,8 @@ fixes race on forked branches through a git-style sandbox abstraction
    separated from the next-best non-overlapping candidate: a blank-line /
    trailing-space drift tolerance, in which the block's non-blank lines
    must still match the file, and a near-miss rescue that applies only the
-   find -> replace delta onto the matched real-file window) and runs the
+   find -> replace delta onto the matched real-file window, refusing any
+   delta that rewrites a line the model's own copy slipped on) and runs the
    test suite inside its own sandbox. (The default local backend
    uses temp dirs - no isolation; with `--sandbox nebius` each branch forks
    a VM-level state image on Token Factory Sandboxes.)
