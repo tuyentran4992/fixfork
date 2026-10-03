@@ -90,7 +90,7 @@ fixes race on forked branches through a git-style sandbox abstraction
    for its own explanation: coordinated edits (a caller passing the value, the
    class accepting it, related methods staying consistent) belong to the same
    hypothesis - not split across hypotheses (live evidence: one multi-location
-   fix split into three partial hypotheses left every branch red).
+   fix split into three partial hypotheses left every branch red). The requested count is a target, not a hard filter: a reply carrying fewer complete hypotheses than requested (at least one) is raced rather than discarded (measured: a complete 1-of-3 reply used to be thrown away by an exact-count check); extra complete ones are deduplicated then capped at the branch count, and an empty or malformed reply still rejects.
 4. **Fork & race** - the sandbox state is forked into three branches; each
    applies its edit when locatable (exact string match first, then two
    guarded fallbacks, each used only when the target is unique or clearly
@@ -133,7 +133,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model replies for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 260 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 270 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be
