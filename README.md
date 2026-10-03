@@ -69,6 +69,22 @@ fixes race on forked branches through a git-style sandbox abstraction
 
 ## How it works
 
+```mermaid
+flowchart TD
+  A["Repo + failing test command"] --> B["Baseline: confirm the suite is red"]
+  B --> C["Tavily: one search per run - failure signature to hints"]
+  C --> D["Nemotron 3 Super 120B: three divergent hypotheses, each a complete edit plan"]
+  D -->|"edits touch test/CI/config"| K["Refused: blocked (never forked, never green)"]
+  D -->|"edits do not locate in the tree"| L["Refused: not_run (never tested; still in the report)"]
+  D --> E["Fork the sandbox state into three branches"]
+  E --> F["Each branch: apply its edit, run the suite in its own sandbox"]
+  F -->|"still red"| G["Nemotron 3 Nano 30B: extra repair rounds (up to 2 per branch)"]
+  G --> F
+  F -->|"all branches finished"| H["Verdict by evidence: green first, then fewest lines changed; losers rolled back"]
+  H -->|"at least one green"| I["Winner: git-apply-able patch, race report, raw replies, JSONL sidecars"]
+  H -->|"no branch green"| J["No patch exported: the least-failed branch is a lead, not a fix"]
+```
+
 1. **Baseline** - run the failing test; confirm it is red.
 2. **Web grounding (Tavily)** - one real search call per run for the failure
    signature (failing test + exception line); the top results are injected
