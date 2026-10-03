@@ -1,0 +1,39 @@
+
+[
+  {
+    "title": "Fix missing fold attribute in Time and DateTime constructors",
+    "rationale": "The failing tests show that Time and DateTime items created from Python objects with fold=1 have fold=0. This occurs because the item function does not pass the fold attribute to the constructors, and the constructors do not initialize the superclass time/datetime with the fold parameter. The fix involves updating the item function to pass fold=value.fold when creating Time/DateTime objects, updating the constructors to accept fold and initialize the superclass with it, and updating the _new methods to preserve fold during arithmetic operations.",
+    "edits": [
+      {
+        "file": "tomlkit/items.py",
+        "find": "    elif isinstance(value, time):\n        return Time(\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat(),\n        )",
+        "replace": "    elif isinstance(value, time):\n        return Time(\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat(),\n            fold=value.fold,\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    elif isinstance(value, datetime):\n        return DateTime(\n            value.year,\n            value.month,\n            value.day,\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat().replace(\"+00:00\", \"Z\"),\n        )",
+        "replace": "    elif isinstance(value, datetime):\n        return DateTime(\n            value.year,\n            value.month,\n            value.day,\n            value.hour,\n            value.minute,\n            value.second,\n            value.microsecond,\n            value.tzinfo,\n            Trivia(),\n            value.isoformat().replace(\"+00:00\", \"Z\"),\n            fold=value.fold,\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __init__(\n        self,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n    ) -> None:\n        super().__init__(trivia or Trivia())\n        self._raw = raw",
+        "replace": "    def __init__(\n        self,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str = \"\",\n        fold: int = 0,\n    ) -> None:\n        Item.__init__(self, trivia or Trivia())\n        time.__init__(self, hour, minute, second, microsecond, tzinfo, fold=fold)\n        self._raw = raw"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def _new(self, result: time) -> Time:\n        raw = result.isoformat()\n\n        return Time(\n            result.hour,\n            result.minute,\n            result.second,\n            result.microsecond,\n            result.tzinfo,\n            self._trivia,\n            raw,\n        )",
+        "replace": "    def _new(self, result: time) -> Time:\n        raw = result.isoformat()\n\n        return Time(\n            result.hour,\n            result.minute,\n            result.second,\n            result.microsecond,\n            result.tzinfo,\n            self._trivia,\n            raw,\n            fold=result.fold,\n        )"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def __init__(\n        self,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        **kwargs: object,\n    ) -> None:\n        super().__init__(trivia or Trivia())\n\n        self._raw = raw or self.isoformat()",
+        "replace": "    def __init__(\n        self,\n        year: int,\n        month: int,\n        day: int,\n        hour: int,\n        minute: int,\n        second: int,\n        microsecond: int,\n        tzinfo: tzinfo | None,\n        trivia: Trivia | None = None,\n        raw: str | None = None,\n        fold: int = 0,\n    ) -> None:\n        Item.__init__(self, trivia or Trivia())\n        datetime.__init__(self, year, month, day, hour, minute, second, microsecond, tzinfo, fold=fold)\n        self._raw = raw or self.isoformat()"
+      },
+      {
+        "file": "tomlkit/items.py",
+        "find": "    def _new(self, result: datetime) -> DateTime:\n        raw = result.isoformat()\n\n        return DateTime(\n            result.year,\n            result.month,\n            result.day,\n            result.hour,\n            result.minute,\n            result.second,\n            result.microsecond,\n            result.tzinfo,\n            self._trivia,\n            raw,\n        )",
+        "replace": "    def _new(self, result: datetime) -> DateTime:\n        raw = result.isoformat()\n\n        return DateTime(\n            result.year,\n            result.month,\n            result.day,\n            result.hour,\n            result.minute,\n            result.second,\n            result.microsecond,\n            result.tzinfo,\n            self._trivia,\n            raw,\n            fold=result.fold,\n        )"
+      }
+    ]
+  }
+]

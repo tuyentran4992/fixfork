@@ -686,19 +686,30 @@ def parse_hypotheses(
     notes: list[str] | None = None,
     on_duplicates: str = "raise",
 ) -> list[Hypothesis]:
-    """Parse the diagnosis reply into ``n`` hypotheses.
+    """Parse the diagnosis reply into hypotheses (``n`` = requested count).
 
-    The reply must carry ``n`` hypotheses, but the RESULT may hold fewer: exact
-    duplicates collapse, and a hypothesis left with no real edit (every edit a
-    no-op, ``find == replace``) is dropped - each with a note. Only when
-    nothing usable remains is the reply rejected (``HypothesisError``).
+    The reply may carry FEWER complete hypotheses than requested: that is
+    accepted and raced, not rejected - measured (02/10/2026, race tomlkit
+    2d): a reply carrying ONE complete hypothesis of the three requested
+    (title + rationale + six real edits, none a no-op) was thrown away by
+    the exact-count check and zero branches raced. The count shortfall gets
+    a note. A reply carrying MORE is not thrown away either: duplicates are
+    handled first (see ``on_duplicates``), then the remainder is capped at
+    ``n`` branches (first in reply order) with a note.
+
+    The RESULT may still hold fewer than the reply carried: a hypothesis
+    left with no real edit (every edit a no-op, ``find == replace``) is
+    dropped, with a note; exact duplicates collapse in "collapse" mode. Only
+    when nothing usable remains is the reply rejected (``HypothesisError``) -
+    together with reply-level malformed content: wrong shapes, missing
+    title/rationale, an empty array.
 
     Exception: a reply shaped as a flat array of bare edits (``file``/``find``/
     ``replace`` objects, no hypothesis envelope) is RESCUED as a single
     hypothesis holding all of its edits - measured with a real model reply
     (02/10/2026): the whole fix was thrown away over the missing wrapper. Such
-    an array is rescued only when every element is edit-shaped; mixed shapes
-    and wrong counts of non-edit items still reject.
+    an array is rescued only when every element is edit-shaped; any other
+    shape falls through to the strict per-hypothesis checks above.
 
     ``on_duplicates`` controls duplicate handling: "raise" (strict, default -
     duplicate titles or edit sets reject the whole reply) or "collapse" (keep
@@ -711,6 +722,11 @@ def parse_hypotheses(
         raise ValueError(
             f"on_duplicates must be 'raise' or 'collapse', got {on_duplicates!r}"
         )
+    if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+        # soi chéo 03/10: with n=0 a non-empty reply would slice to [] and
+        # return silently (and the flat rescue runs before any cap); n<0
+        # sliced from the wrong end. Reject the parameter, not the reply.
+        raise ValueError(f"n must be an int >= 1, got {n!r}")
     raw = extract_json_array(text)
     items, repairs = loads_json_tolerant(raw)
     if items is PARSE_FAILURE:
@@ -734,8 +750,8 @@ def parse_hypotheses(
         # hypothesis (a single complete fix); the fix still races instead of
         # being thrown away over the missing envelope.
         return _parse_bare_edits(items, notes)
-    if len(items) != n:
-        raise HypothesisError(f"expected {n} hypotheses, got {len(items)}")
+    if not items:
+        raise HypothesisError(f"expected {n} hypotheses, got an empty list")
 
     hypotheses: list[Hypothesis] = []
     dropped_noop = 0
@@ -777,10 +793,31 @@ def parse_hypotheses(
             "reply had no real edits: every edit was a no-op (find == replace)"
         )
 
+    if len(items) < n and notes is not None:
+        # measured (02/10/2026, race tomlkit 2d): a complete 1-of-3 reply was
+        # rejected by the exact-count check and zero branches raced - a count
+        # shortfall is not a reason to discard a real fix
+        notes.append(
+            f"reply carried {len(items)} of {n} requested hypotheses: kept the "
+            "complete one(s) instead of discarding over the count (later drops "
+            "and the branch cap still apply)"
+        )
+
     if on_duplicates == "collapse":
         hypotheses = collapse_duplicates(hypotheses, notes=notes)
     else:
         assert_divergent(hypotheses)
+
+    if len(hypotheses) > n:
+        # count-above is not a discard reason either: race at most n branches
+        # (first in reply order, after duplicate handling)
+        over = len(hypotheses) - n
+        hypotheses = hypotheses[:n]
+        if notes is not None:
+            notes.append(
+                f"reply carried more unique hypotheses than the {n} requested: "
+                f"kept the first {n}, dropped {over} over the branch cap"
+            )
     return hypotheses
 
 

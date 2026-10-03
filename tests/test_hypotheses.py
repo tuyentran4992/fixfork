@@ -28,9 +28,18 @@ class ParseHypothesesTest(unittest.TestCase):
         hypotheses = parse_hypotheses(reply, n=3)
         self.assertEqual(len(hypotheses), 3)
 
-    def test_wrong_count_rejected(self):
+    def test_fewer_complete_hypotheses_rescued_with_note(self):
+        # a complete subset shorter than requested used to be thrown away by
+        # the exact-count check (measured shape: race tomlkit 2d, see
+        # CountRescueTest for the real 1-of-3 reply)
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(json.dumps(DEMO_HYPOTHESES[:2]), n=3, notes=notes)
+        self.assertEqual(len(hypotheses), 2)
+        self.assertTrue(any("2 of 3" in note for note in notes), notes)
+
+    def test_empty_hypothesis_list_rejected(self):
         with self.assertRaises(HypothesisError):
-            parse_hypotheses(json.dumps(DEMO_HYPOTHESES[:2]), n=3)
+            parse_hypotheses("[]", n=3)
 
     def test_non_json_rejected(self):
         with self.assertRaises(HypothesisError):
@@ -495,6 +504,136 @@ class BareEditListRescueTest(unittest.TestCase):
         hypotheses = parse_hypotheses(json.dumps([edit]), n=3)
         self.assertEqual(len(hypotheses), 1)
         self.assertEqual(len(hypotheses[0].edits), 1)
+
+
+class CountRescueTest(unittest.TestCase):
+    """Count deviations: complete fixes survive (measured 02/10/2026).
+
+    Live evidence (race tomlkit 2d): the model answered the 3-hypothesis
+    request with ONE complete hypothesis (title + rationale + six real edits,
+    none a no-op - data/tomlkit-reply-1of3-2026-10-02.json); the exact-count
+    check threw the whole reply away ("expected 3 hypotheses, got 1") and zero
+    branches raced. The keep-what-is-complete rule runs both ways: fewer
+    complete hypotheses race with a note; more are deduplicated first, then
+    capped at n branches with a note.
+    """
+
+    def test_real_1of3_reply_rescues_one_hypothesis(self):
+        reply = (
+            Path(__file__).parent / "data" / "tomlkit-reply-1of3-2026-10-02.json"
+        ).read_text(encoding="utf-8")
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes, on_duplicates="collapse")
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 6)
+        self.assertTrue(any("1 of 3" in note for note in notes), notes)
+
+    def test_more_than_n_capped_with_note(self):
+        items = [
+            {
+                "title": f"Theory {i}",
+                "rationale": "a",
+                "edits": [{"file": "a.py", "find": f"x{i} = 1", "replace": f"x{i} = 2"}],
+            }
+            for i in range(1, 5)
+        ]
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(
+            json.dumps(items), n=3, notes=notes, on_duplicates="collapse"
+        )
+        self.assertEqual([h.id for h in hypotheses], [1, 2, 3])
+        self.assertTrue(any("branch cap" in note for note in notes), notes)
+
+    def test_more_than_n_dedupes_before_capping(self):
+        # four titled copies of three distinct edit sets: duplicates collapse
+        # first, so the cap does not fire and no fix is lost
+        edits = [
+            {"file": "a.py", "find": f"y{i} = 1", "replace": f"y{i} = 2"}
+            for i in range(1, 4)
+        ]
+        items = [
+            {"title": "A", "rationale": "a", "edits": [edits[0]]},
+            {"title": "B", "rationale": "b", "edits": [edits[1]]},
+            {"title": "C", "rationale": "c", "edits": [edits[2]]},
+            {"title": "A again", "rationale": "d", "edits": [dict(edits[0])]},
+        ]
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(
+            json.dumps(items), n=3, notes=notes, on_duplicates="collapse"
+        )
+        self.assertEqual([h.title for h in hypotheses], ["A", "B", "C"])
+        self.assertTrue(any("collapsed" in note for note in notes), notes)
+        self.assertFalse(any("branch cap" in note for note in notes), notes)
+
+    def test_malformed_item_rejects_even_when_count_short(self):
+        # the count rescue only covers COMPLETE hypotheses; a broken item
+        # still rejects the whole reply (strict per-item validation)
+        items = [
+            dict(DEMO_HYPOTHESES[0]),
+            {"title": "No edits", "rationale": "a", "edits": []},
+        ]
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(json.dumps(items), n=3)
+
+    def test_short_reply_with_all_noop_hypothesis_races_the_rest(self):
+        edit = DEMO_HYPOTHESES[0]["edits"][0]
+        noop = {"file": "src/tax.py", "find": "z = 9", "replace": "z = 9"}
+        items = [
+            {"title": "Noop", "rationale": "a", "edits": [noop]},
+            {"title": "Fine", "rationale": "b", "edits": [dict(edit)]},
+        ]
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(json.dumps(items), n=3, notes=notes)
+        self.assertEqual([h.title for h in hypotheses], ["Fine"])
+        self.assertTrue(any("2 of 3" in note for note in notes), notes)
+
+    def test_more_than_n_capped_in_strict_mode(self):
+        # default on_duplicates="raise": distinct edit sets pass the strict
+        # divergence check, then the cap keeps the first n
+        items = [
+            {
+                "title": f"Theory {i}",
+                "rationale": "a",
+                "edits": [{"file": "a.py", "find": f"z{i} = 1", "replace": f"z{i} = 2"}],
+            }
+            for i in range(1, 5)
+        ]
+        hypotheses = parse_hypotheses(json.dumps(items), n=3)
+        self.assertEqual([h.id for h in hypotheses], [1, 2, 3])
+
+    def test_n_below_one_rejected(self):
+        # soi chéo 03/10: n=0 would slice a non-empty reply to [] silently
+        # (and the flat rescue ran before any cap); reject the parameter
+        for bad in (0, -1, True):
+            with self.assertRaises(ValueError):
+                parse_hypotheses(json.dumps(DEMO_HYPOTHESES), n=bad)
+
+    def test_rescues_do_not_require_notes(self):
+        # notes is optional: the new paths must not crash without it
+        hypotheses = parse_hypotheses(json.dumps(DEMO_HYPOTHESES[:2]), n=3)
+        self.assertEqual(len(hypotheses), 2)
+        over = [
+            {
+                "title": f"Theory {i}",
+                "rationale": "a",
+                "edits": [{"file": "a.py", "find": f"v{i} = 1", "replace": f"v{i} = 2"}],
+            }
+            for i in range(1, 5)
+        ]
+        self.assertEqual(len(parse_hypotheses(json.dumps(over), n=3)), 3)
+
+    def test_malformed_item_rejects_even_when_count_above(self):
+        items = [
+            {
+                "title": f"Theory {i}",
+                "rationale": "a",
+                "edits": [{"file": "a.py", "find": f"w{i} = 1", "replace": f"w{i} = 2"}],
+            }
+            for i in range(1, 4)
+        ]
+        items.append({"title": "Broken", "rationale": "x", "edits": []})
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(json.dumps(items), n=3)
 
 
 if __name__ == "__main__":
