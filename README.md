@@ -143,6 +143,11 @@ Instead of a single "suggested fix":
    `Tests/` (as in Pillow), `__tests__/` and `testdata/` all count - and the
    exported patch is re-checked against the same list, so a renamed, quoted
    or differently-cased protected path is withheld, not shipped.
+   The refusal path (`fixfork/guard.py`) is exercised by 19 tests; in a
+   2026-09-29 replay on Nebius Token Factory Sandboxes, the test-editing
+   branch was blocked before any sandbox operation ran for it (0 operations
+   for that branch, in a 10-operation run), the two source-only branches
+   then raced, and the winner's patch re-applied and the tests passed.
 5. **The diagnosis is web-grounded.** One real Tavily search per run over the
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the
