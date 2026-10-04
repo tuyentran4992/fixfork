@@ -680,6 +680,118 @@ def _parse_bare_edits(items: list, notes: list[str] | None) -> list[Hypothesis]:
     ]
 
 
+def _extract_balanced_objects(text: str) -> list[str]:
+    """Top-level ``{...}`` chunks, scanning OUTSIDE string literals.
+
+    Used only by the salvage pass below, for replies that already failed both
+    the strict parse and the bounded repair pass. Escape-aware, so a ``{``
+    inside a string value cannot open a chunk and an unbalanced brace in
+    prose cannot swallow one. Bounded by the reply itself (the completion
+    budget caps its size), so no separate cap is needed.
+
+    The scanner tracks double-quoted strings (JSON style), which is what this
+    pass sees: a reply written as a Python literal is handled earlier by
+    ``_parse_python_literal`` and never reaches salvage; a reply that still
+    mis-chunks here can only lose candidates (every chunk must parse and
+    validate on its own), never produce a wrong one.
+    """
+    chunks: list[str] = []
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(text):
+        if esc:
+            esc = False
+            continue
+        if in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    chunks.append(text[start : i + 1])
+                    start = -1
+    return chunks
+
+
+def salvage_top_level_objects(raw: str) -> tuple[list[dict], int, int]:
+    """Keep the intact top-level objects from a reply that fails to parse.
+
+    Returns ``(items, n_chunks, n_repaired)``. ``items`` are dicts already
+    validated so the normal downstream checks can take them without raising:
+    hypothesis objects (non-empty ``title``/``rationale`` strings, at least
+    one structurally sound edit) come first; when none survives but bare edit
+    objects do, those are returned so the flat-edit rescue can still run.
+    Invalid objects are dropped - this pass never fabricates and never loosens
+    the edit rules; it only keeps what already validates (each object gets the
+    same per-object bounded repair pass as the whole reply would).
+
+    Live evidence (04/10/2026, docket#498 live run): the reply's
+    LAST object closed with ``]`` plus trailing junk, so the whole array
+    failed strict parsing AND the bounded repair (one step moved the failure
+    forward but left trailing ``}``/``]``) while objects 1 and 2 parsed
+    strictly - the run raced zero branches and $0.0205 was thrown away.
+    Recovery here: 2 of 3.
+    """
+    chunks = _extract_balanced_objects(raw)
+    hypothesis_items: list[dict] = []
+    edit_items: list[dict] = []
+    n_repaired = 0
+    for chunk in chunks:
+        value, fixes = loads_json_tolerant(chunk)
+        if value is PARSE_FAILURE or not isinstance(value, dict):
+            continue
+        title = value.get("title")
+        rationale = value.get("rationale")
+        raw_edits = value.get("edits")
+        if (
+            isinstance(title, str)
+            and title.strip()
+            and isinstance(rationale, str)
+            and rationale.strip()
+            and isinstance(raw_edits, list)
+            and raw_edits
+        ):
+            edits = []
+            for raw_edit in raw_edits:
+                try:
+                    parse_edit_object(raw_edit, "salvaged edit", on_noop="drop")
+                except HypothesisError:
+                    continue  # malformed edit: drop it, keep the rest
+                edits.append(raw_edit)
+            if edits:
+                hypothesis_items.append(
+                    {"title": title, "rationale": rationale, "edits": edits}
+                )
+                if fixes:
+                    # Counted only for KEPT objects (soi chéo 04/10, two
+                    # rounds): the note's "needed light repair" must not
+                    # count chunks that were later dropped by validation.
+                    n_repaired += 1
+            continue
+        if all(key in value for key in ("file", "find", "replace")):
+            try:
+                parse_edit_object(value, "salvaged edit", on_noop="drop")
+            except HypothesisError:
+                continue
+            edit_items.append(value)
+            if fixes:
+                n_repaired += 1
+    items = hypothesis_items or edit_items
+    return items, len(chunks), n_repaired
+
+
 def parse_hypotheses(
     text: str,
     n: int = 3,
@@ -730,13 +842,34 @@ def parse_hypotheses(
     raw = extract_json_array(text)
     items, repairs = loads_json_tolerant(raw)
     if items is PARSE_FAILURE:
-        try:
-            json.loads(raw)
-        except json.JSONDecodeError as exc:  # keep the parser's detail for debugging
-            raise HypothesisError(f"hypothesis reply is not valid JSON: {exc}") from exc
-        # Defensive: PARSE_FAILURE means the strict parse above already failed,
-        # so this line is unreachable today (soi chéo 01/10).
-        raise HypothesisError("hypothesis reply is not valid JSON")
+        # Salvage pass (JEV p1, conf 0.92; measured on a real reply - the
+        # docket#498 run, 04/10/2026): one broken object can take down the
+        # whole-array parse while the other objects are intact. Keep the
+        # intact ones instead of throwing a usable fix away; the raw reply
+        # stays verbatim in the report and every kept object still passes the
+        # normal checks below.
+        salvaged, n_chunks, n_repaired = salvage_top_level_objects(raw)
+        if salvaged:
+            if notes is not None:
+                detail = (
+                    f"salvaged {len(salvaged)} of {n_chunks} top-level "
+                    "object(s) from the raw text"
+                )
+                if n_repaired:
+                    detail += f" ({n_repaired} needed light repair)"
+                notes.append(f"reply failed to parse as a whole; {detail}")
+            items = salvaged
+            # The failed whole-reply pass must not produce the "lightly
+            # repaired" note below as if parsing had succeeded.
+            repairs = 0
+        else:
+            try:
+                json.loads(raw)
+            except json.JSONDecodeError as exc:  # keep the parser's detail for debugging
+                raise HypothesisError(f"hypothesis reply is not valid JSON: {exc}") from exc
+            # Defensive: PARSE_FAILURE means the strict parse above already failed,
+            # so this line is unreachable today (soi chéo 01/10).
+            raise HypothesisError("hypothesis reply is not valid JSON")
     if repairs and notes is not None:
         notes.append(
             f"hypothesis reply was lightly repaired ({repairs} repair step(s)) before parsing"

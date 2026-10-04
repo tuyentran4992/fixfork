@@ -1,0 +1,31 @@
+
+[
+  {
+    "title": "Replace blocking Redis read with cancellation-safe wait using _cancellation._wait_for_event",
+    "rationale": "The worker's main loop uses asyncio.wait_for on a blocking Redis read, which is not cancellation-safe on Python 3.10-3.11. This causes the worker to ignore cancellation signals during Redis failures. Replace with a wait on a combination of the Redis read event and a stop event using _cancellation._wait_for_event for the stop event and a non-blocking Redis read with short timeout.",
+    "edits": [
+      {
+        "file": "python/src/docket/worker.py",
+        "find": "        message = await asyncio.wait_for(self._redis_read_message(), timeout=1.0)\n",
+        "replace": "        # Wait for either a message or a stop signal.\n        while not self._stop_event.is_set():\n            try:\n                # Use a short timeout to allow checking for stop event frequently.\n                message = await asyncio.wait_for(self._redis_read_message(), timeout=0.1)\n                if message is not None:\n                    return message\n            except asyncio.TimeoutError:\n                # Timeout is expected, check stop event again.\n                pass\n            except redis.exceptions.ConnectionError:\n                # On connection error, sleep briefly and check stop event.\n                await asyncio.sleep(0.1)\n                if self._stop_event.is_set():\n                    return None\n        return None\n"
+      }
+    ]
+  },
+  {
+    "title": "Add cancellation check in Redis reconnection loop during drain",
+    "rationale": "When Redis fails during the drain phase, the worker enters a reconnection loop that does not check for the stop flag, causing it to retry indefinitely even after being cancelled. Add a periodic check for the stop flag in the reconnection loop to allow the worker to exit when cancelled.",
+    "edits": [
+      {
+        "file": "python/src/docket/worker.py",
+        "find": "        while True:\n            try:\n                await self._redis.initialize()\n                break\n            except redis.exceptions.ConnectionError:\n                await asyncio.sleep(1.0)\n",
+        "replace": "        while not self._stop_event.is_set():\n            try:\n                await self._redis.initialize()\n                break\n            except redis.exceptions.ConnectionError:\n                await asyncio.sleep(1.0)\n        if self._stop_event.is_set():\n            raise asyncio.CancelledError()\n"
+      }
+    ]
+  },
+  {
+    "file": "python/src/docket/worker.py",
+    "find": "    def _handle_sigterm(self, signum, frame) -> None:\n        logger.info('Received SIGTERM, initiating graceful shutdown')\n        self._should_stop = True\n    \n    def _handle_sigint(self, signum, frame) -> None:\n        logger.info('Received SIGINT, initiating graceful shutdown')\n        self._should_stop = True\n",
+    "replace": "    def _handle_sigterm(self, signum, frame) -> None:\n        logger.info('Received SIGTERM, initiating graceful shutdown')\n        self._should_stop = True\n        self._stop_event.set()\n    \n    def _handle_sigint(self, signum, frame) -> None:\n        logger.info('Received SIGINT, initiating graceful shutdown')\n        self._should_stop = True\n        self._stop_event.set()\n"
+    ]
+  }
+]

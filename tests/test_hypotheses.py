@@ -13,6 +13,7 @@ from fixfork.hypotheses import (
     parse_edit_object,
     parse_hypotheses,
     repair_json_text,
+    salvage_top_level_objects,
 )
 from fixfork.pipeline import _parse_loop_edits
 
@@ -634,6 +635,113 @@ class CountRescueTest(unittest.TestCase):
         items.append({"title": "Broken", "rationale": "x", "edits": []})
         with self.assertRaises(HypothesisError):
             parse_hypotheses(json.dumps(items), n=3)
+
+
+class SalvageTopLevelObjectsTest(unittest.TestCase):
+    """Intact objects survive when the reply fails to parse as a WHOLE.
+
+    Live evidence (2026-10-04, docket#498 live run): objects 1-2 of 3 parsed
+    strictly, the LAST object closed with `]` plus trailing junk, so strict
+    parse AND the bounded repair pass both failed while two intact hypotheses
+    sat in the same reply - zero branches raced and the run's $0.0205 was
+    thrown away. Real reply in data/docket-reply-2026-10-04.txt. The salvage
+    pass keeps the intact objects; every kept object still passes the normal
+    downstream checks (no loosened rules).
+    """
+
+    def test_real_docket_reply_salvages_intact_objects(self):
+        reply = (
+            Path(__file__).parent / "data" / "docket-reply-2026-10-04.txt"
+        ).read_text(encoding="utf-8")
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes, on_duplicates="collapse")
+        self.assertEqual(len(hypotheses), 2)
+        self.assertTrue(all(h.edits for h in hypotheses))
+        self.assertTrue(any("salvaged 2 of 3" in note for note in notes), notes)
+        # the failed whole-reply parse must not be reported as "lightly repaired"
+        self.assertFalse(any("lightly repaired" in note for note in notes), notes)
+
+    def test_broken_object_does_not_poison_neighbours(self):
+        good_a = {
+            "title": "A",
+            "rationale": "ra",
+            "edits": [{"file": "a.py", "find": "x = 1", "replace": "x = 2"}],
+        }
+        good_b = {
+            "title": "B",
+            "rationale": "rb",
+            "edits": [{"file": "b.py", "find": "p = 1", "replace": "p = 2"}],
+        }
+        broken = '{"title": "Broken", "rationale": oops, "edits": []}'
+        reply = "[" + json.dumps(good_a) + ", " + broken + ", " + json.dumps(good_b) + "]"
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes)
+        self.assertEqual([h.title for h in hypotheses], ["A", "B"])
+        self.assertTrue(any("salvaged 2 of 3" in note for note in notes), notes)
+
+    def test_salvaged_flat_bare_edits_go_through_flat_rescue(self):
+        e1 = '{"file": "a.py", "find": "x = 1", "replace": "x = 2"}'
+        e2 = '{"file": "b.py", "find": "p = 1", "replace": "p = 2"}'
+        broken = '{"file": "c.py", "find": q = 1, "replace": "q = 2"}'
+        reply = "[" + e1 + ", " + e2 + ", " + broken + "]"
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes)
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 2)
+        self.assertTrue(any("salvaged 2 of 3" in note for note in notes), notes)
+        self.assertTrue(any("flat edit list" in note for note in notes), notes)
+
+    def test_noop_edit_in_salvaged_hypothesis_drops_with_note(self):
+        good = {
+            "title": "A",
+            "rationale": "r",
+            "edits": [
+                {"file": "a.py", "find": "x = 1", "replace": "x = 2"},
+                {"file": "a.py", "find": "same", "replace": "same"},
+            ],
+        }
+        broken = '{"title": "B", "rationale": oops, "edits": []}'
+        reply = "[" + json.dumps(good) + ", " + broken + "]"
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes)
+        self.assertEqual(len(hypotheses), 1)
+        self.assertEqual(len(hypotheses[0].edits), 1)
+        self.assertTrue(any("no-op edits dropped" in note for note in notes), notes)
+
+    def test_salvage_returns_nothing_when_no_object_validates(self):
+        raw = '[{"title": "t", "rationale": "r", "edits": [}]'
+        items, n_chunks, _ = salvage_top_level_objects(raw)
+        self.assertEqual(items, [])
+        self.assertEqual(n_chunks, 1)
+        with self.assertRaises(HypothesisError):
+            parse_hypotheses(raw, n=3)
+
+    def test_repaired_chunk_counted_in_note_only_when_kept(self):
+        # a chunk that needed the bounded repair but WAS kept is reported;
+        # chunks dropped by validation are not counted as "needed repair"
+        # (soi chéo 04/10, two rounds)
+        repaired = (
+            '{"title": "B", "rationale": "r", "edits": '
+            '[{"file": "b.py", "find": "p = 1", "replace": "p = 2"},]}'
+        )  # trailing comma: strict fails, the bounded repair fixes it
+        broken = '{"title": "X", "rationale": oops, "edits": []}'
+        good = json.dumps(
+            {
+                "title": "A",
+                "rationale": "ra",
+                "edits": [{"file": "a.py", "find": "x = 1", "replace": "x = 2"}],
+            }
+        )
+        reply = "[" + good + ", " + repaired + ", " + broken + "]"
+        notes: list[str] = []
+        hypotheses = parse_hypotheses(reply, n=3, notes=notes)
+        self.assertEqual([h.title for h in hypotheses], ["A", "B"])
+        self.assertTrue(any("1 needed light repair" in note for note in notes), notes)
+
+    def test_healthy_reply_has_no_salvage_note(self):
+        notes: list[str] = []
+        parse_hypotheses(json.dumps(DEMO_HYPOTHESES), n=3, notes=notes)
+        self.assertFalse(any("salvaged" in note for note in notes), notes)
 
 
 if __name__ == "__main__":
