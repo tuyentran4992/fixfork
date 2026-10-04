@@ -19,10 +19,11 @@ fixes race on forked branches through a git-style sandbox abstraction
 > Status: **early development.** The offline pipeline (deterministic fake
 > router + local sandbox) runs end to end, and live Token Factory model calls
 > are wired and verified (2026-09-28: full diagnosis + 3-branch race on the
-> demo repo, ~$0.003 per run; the exported patch was re-applied to a pristine
-> checkout with `git apply` and the tests passed). Web grounding via Tavily
-> is wired and verified (2026-09-28: a live run injected 5 real search results
-> into the diagnosis prompt before proposing hypotheses).
+> demo repo, about $0.003-$0.004 per run, rounded from $0.0029-$0.0042; the
+> exported patch was re-applied to a pristine checkout with `git apply` and
+> the tests passed). Web grounding via Tavily is wired and verified
+> (2026-09-28: a live run injected 5 real search results into the diagnosis
+> prompt before proposing hypotheses).
 > Validated on a real external repository (2026-09-29): run against
 > python-humanize (base commit 823ad60~1 plus the regression tests from
 > PR #329), FixFork went from 6 failing tests to a winning patch; the exported
