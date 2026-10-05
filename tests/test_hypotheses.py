@@ -229,6 +229,15 @@ class LoopReplyParseTest(unittest.TestCase):
         with self.assertRaises(HypothesisError):
             _parse_loop_edits("I have no further idea.")
 
+    def test_literal_empty_list_is_no_further_idea(self):
+        # Soi chéo 05/10: the loop template tells the model it may "reply with
+        # an empty list" - the parser must accept that form instead of burning
+        # the round on a parse error. A non-empty bracket pair stays rejected.
+        self.assertEqual(_parse_loop_edits("[]"), [])
+        self.assertEqual(_parse_loop_edits("I have no further idea. [ ]"), [])
+        with self.assertRaises(HypothesisError):
+            _parse_loop_edits("[not empty]")
+
 
 class GenerateHypothesesTest(unittest.TestCase):
     def test_fake_router_round_trip(self):

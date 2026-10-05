@@ -33,7 +33,7 @@ from .testparse import parse_unittest_output
 LOOP_PROMPT_TEMPLATE = """You are FixFork's iteration model inside one branch.
 
 The edit below was applied and the tests STILL fail. Propose a small follow-up
-edit, or reply with an empty list if you have no further idea.
+edit, or reply with an empty list ([]) if you have no further idea.
 
 Reply with ONLY a JSON object: {{"edits": [{{"file": "...", "find": "exact existing text", "replace": "..."}}]}}
 
@@ -64,6 +64,14 @@ def _parse_loop_edits(text: str, notes: list[str] | None = None) -> list[Edit]:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1:
+        # The template tells the model it may "reply with an empty list" when
+        # it has no further idea; accept that literally instead of burning the
+        # round on a parse error (soi chéo 05/10: template promised a form the
+        # parser rejected). Only a truly empty bracket pair counts.
+        if "{" not in text and "[" in text and "]" in text:
+            body = text[text.find("[") + 1 : text.rfind("]")]
+            if not body.strip():
+                return []
         raise HypothesisError("no JSON object found in loop reply")
     # json.loads raises JSONDecodeError (a ValueError) and a JSON array has no
     # .get: both used to escape the loop's `except (RouterError,
@@ -95,6 +103,18 @@ def _parse_loop_edits(text: str, notes: list[str] | None = None) -> list[Edit]:
     return [parse_edit_object(raw, "loop reply") for raw in edits]
 
 
+def _tail(output: str | None, log_tail: int) -> str:
+    """Last ``log_tail`` characters of ``output`` ("" for empty/None/budget≤0).
+
+    ``output[-log_tail:]`` with ``log_tail=0`` is ``output[0:]`` - the WHOLE
+    log, the opposite of what a zero tail budget asked for - and ``None``
+    would raise TypeError (soi chéo 05/10).
+    """
+    if not output or log_tail <= 0:
+        return ""
+    return output[-log_tail:]
+
+
 def run_pipeline(
     repo: str | Path,
     test_command: str,
@@ -123,7 +143,7 @@ def run_pipeline(
 
     base_files = sandbox.read_tree(baseline_sid)
     base_snapshot = sandbox.checkpoint(baseline_sid)
-    log = baseline_exec.output[-log_tail:] if baseline_exec.output else "(no output)"
+    log = _tail(baseline_exec.output, log_tail) if baseline_exec.output else "(no output)"
     # Files the failure log points at get prompt priority (see render_files).
     refs = extract_refs(log, base_files)
     # Definition files for the names those refs import: the model must be able
@@ -270,7 +290,28 @@ def run_pipeline(
                 rounds=0,
             )
             continue
-        sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
+        try:
+            sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
+        except SandboxError as exc:
+            # A fork failure used to escape the per-branch handling and kill
+            # the whole run, throwing away every other branch's work (soi chéo
+            # 05/10). Record this branch as ERROR with a done event instead.
+            result.status = BranchStatus.ERROR
+            result.log_tail = f"sandbox error while forking: {exc}"
+            report.notes.append(f"branch {hypothesis.id}: fork failed ({exc})")
+            report.branches.append(result)
+            sink.emit(
+                "branch_done",
+                id=hypothesis.id,
+                status=result.status.value,
+                summary=result.log_tail,
+                tests_ok=False,
+                lines_changed=result.lines_changed,
+                tokens=result.tokens_used,
+                cost=round(result.cost_usd, 6),
+                rounds=result.rounds,
+            )
+            continue
         forked_ids.add(hypothesis.id)
         try:
             result.lines_changed = sandbox.apply_edits(sid, hypothesis.edits)
@@ -278,8 +319,20 @@ def run_pipeline(
             outcome = parse_unittest_output(exec_result.output, exec_result.returncode)
             rounds = 1
             while not outcome.ok and rounds < max_rounds:
-                branch_files = sandbox.read_tree(sid)
-                branch_log = exec_result.output[-log_tail:] if exec_result.output else ""
+                try:
+                    branch_files = sandbox.read_tree(sid)
+                except SandboxError as exc:
+                    # Same rule as the apply/run paths below: a follow-up step
+                    # failing must not discard an outcome the tests already
+                    # measured (soi chéo 05/10: read_tree inside the loop used
+                    # to flip a measured red branch to error via the outer
+                    # except). Keep the last outcome and stop the loop.
+                    report.notes.append(
+                        f"branch {hypothesis.id}: follow-up read_tree failed "
+                        f"({exc}); keeping the last test outcome"
+                    )
+                    break
+                branch_log = _tail(exec_result.output, log_tail)
                 try:
                     loop_refs = extract_refs(branch_log, branch_files)
                     loop_type = resolve_type_context(branch_files, loop_refs)
@@ -362,7 +415,7 @@ def run_pipeline(
                 result.status = BranchStatus.GREEN if outcome.ok else BranchStatus.RED
             result.outcome = outcome
             result.rounds = rounds
-            result.log_tail = exec_result.output[-log_tail:]
+            result.log_tail = _tail(exec_result.output, log_tail)
         except SandboxError as exc:
             result.status = BranchStatus.ERROR
             result.log_tail = f"sandbox error: {exc}"

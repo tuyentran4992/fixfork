@@ -9,7 +9,7 @@ from pathlib import Path
 from fixfork.fakes import DEMO_HYPOTHESES, FakeRouter
 from fixfork.models import BranchStatus
 from fixfork.pipeline import run_pipeline
-from fixfork.sandbox_runner import LocalSandbox
+from fixfork.sandbox_runner import LocalSandbox, SandboxError
 
 DEMO_REPO = Path(__file__).resolve().parent.parent / "examples" / "demo-repo"
 TEST_CMD = "python3 -m unittest discover -s tests"
@@ -164,6 +164,119 @@ class TypeContextPipelineTest(unittest.TestCase):
         self.assertIn("--- app/helpers.py ---", loop_text)
         self.assertIn("class Widget", loop_text)
         self.assertIn("(type context above:", loop_text)
+
+
+class TailTest(unittest.TestCase):
+    def test_zero_and_negative_budget_do_not_return_whole_output(self):
+        # Soi chéo 05/10: output[-0:] is output[0:] - a zero budget used to
+        # return the WHOLE log, the opposite of the request.
+        from fixfork.pipeline import _tail
+
+        self.assertEqual(_tail("abcdef", 0), "")
+        self.assertEqual(_tail("abcdef", -3), "")
+        self.assertEqual(_tail(None, 10), "")
+        self.assertEqual(_tail("abcdef", 3), "def")
+        self.assertEqual(_tail("ab", 10), "ab")
+
+
+class SandboxFailureTest(unittest.TestCase):
+    """A failing sandbox step must cost the offending branch, not the run."""
+
+    def _make_red_repo(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="fixfork-sbfail-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "app.py").write_text("VALUE = 1\n")
+        (tmp / "tests").mkdir()
+        (tmp / "tests" / "__init__.py").write_text("")
+        (tmp / "tests" / "test_x.py").write_text(
+            "import unittest\n\nfrom app import VALUE\n\n\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_value(self):\n"
+            "        self.assertEqual(VALUE, 2)\n"
+        )
+        return tmp
+
+    def _reply(self) -> str:
+        return json.dumps(
+            [
+                {
+                    "title": "bump VALUE",
+                    "rationale": "the module constant is stale",
+                    "edits": [
+                        {
+                            "file": "app.py",
+                            "find": "VALUE = 1",
+                            "replace": "VALUE = 1  # touched",
+                        }
+                    ],
+                }
+            ]
+        )
+
+    def test_fork_failure_keeps_the_run_alive(self):
+        # Soi chéo 05/10: a SandboxError from fork() used to escape the
+        # per-branch handling and kill the whole run.
+        repo = self._make_red_repo()
+
+        class FailingForkSandbox(LocalSandbox):
+            def fork(self, sid, snapshot, new_sid):
+                raise SandboxError("no capacity")
+
+        report = run_pipeline(
+            repo,
+            TEST_CMD,
+            FakeRouter(reason_reply=self._reply()),
+            FailingForkSandbox(),
+            branches=1,
+        )
+        self.assertEqual(len(report.branches), 1)
+        self.assertEqual(report.branches[0].status, BranchStatus.ERROR)
+        self.assertIn("fork failed", " ".join(report.notes))
+        # the branch never ran, so no fix can be exported: at most a lead
+        self.assertEqual(report.winner_diff, "")
+        self.assertIn("lead", report.winner_reason)
+
+    def test_branch_run_failure_is_contained(self):
+        repo = self._make_red_repo()
+
+        class FailingBranchRunSandbox(LocalSandbox):
+            def run(self, sid, command, timeout=120):
+                if sid != "baseline":
+                    raise SandboxError("exec timeout")
+                return super().run(sid, command, timeout=timeout)
+
+        report = run_pipeline(
+            repo,
+            TEST_CMD,
+            FakeRouter(reason_reply=self._reply()),
+            FailingBranchRunSandbox(),
+            branches=1,
+        )
+        self.assertEqual(report.branches[0].status, BranchStatus.ERROR)
+
+    def test_loop_read_tree_failure_keeps_measured_outcome(self):
+        # Soi chéo 05/10: read_tree failing inside the loop used to flip a
+        # measured red branch to error via the outer except, discarding the
+        # outcome the tests had already produced.
+        repo = self._make_red_repo()
+
+        class BrokenReadTreeSandbox(LocalSandbox):
+            def read_tree(self, sid):
+                if sid != "baseline":
+                    raise SandboxError("tree unreadable")
+                return super().read_tree(sid)
+
+        report = run_pipeline(
+            repo,
+            TEST_CMD,
+            FakeRouter(reason_reply=self._reply()),
+            BrokenReadTreeSandbox(),
+            branches=1,
+            max_rounds=2,
+        )
+        branch = report.branches[0]
+        self.assertEqual(branch.status, BranchStatus.RED)
+        self.assertIn("read_tree failed", " ".join(report.notes))
 
 
 if __name__ == "__main__":

@@ -288,12 +288,17 @@ def type_context_note(paths: list[str], rendered: str) -> str:
     shown = [p for p in paths if f"\n--- {p} ---\n" in haystack]
     if not shown:
         return ""
-    return (
-        "\n(type context above: "
+    text = (
+        "(type context above: "
         + ", ".join(shown)
         + " - definitions of names imported by the log-referenced files;"
         " use them to ground real object types and call shapes.)"
     )
+    if len(text) > MAX_NOTE_CHARS:
+        # Same cap render_files applies to its own "(not shown: ...)" note: a
+        # note must never grow the prompt unboundedly (soi chéo 05/10).
+        text = text[: MAX_NOTE_CHARS - 4] + " ...)"
+    return "\n" + text + "\n"
 
 
 # --- Machine-scanned defect occurrences (JEV-p4 plan) -----------------------
