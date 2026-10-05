@@ -39,7 +39,13 @@ Never call `.get(...)` - or any dict-only access - on an object whose type you
 cannot show is a dict; a wrong-type call fails at runtime and verifies
 nothing. A verification must READ state the system produced (re-fetch and
 compare) - an edit whose check passes only because it wrote the expected value
-into the returned object is fabricated, not verified. When the same defect
+into the returned object is fabricated, not verified. A verification that
+cannot obtain an inspectable result is INCONCLUSIVE: it is not evidence that
+the update was dropped, and must not send the code down a fallback path.
+When the re-fetch fails, raises, or returns a value whose shape you cannot
+safely check, keep the original behavior. Only a read that succeeds and
+positively shows the update was dropped may branch to a fallback
+("could not verify" is not "dropped"). When the same defect
 pattern repeats at call sites or return paths the referee exercises, one
 hypothesis must cover every exercised site.
 

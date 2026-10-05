@@ -47,7 +47,13 @@ will be refused - fix the source code only.
 Ground the follow-up in the evidence above: do not call methods or attributes
 the files (or the referee tests' mocks) do not support - never assume dict
 access on an object of an unknown type - and a verification must read state
-the system produced, never a value you wrote yourself.
+the system produced, never a value you wrote yourself. A verification that
+cannot obtain an inspectable result is INCONCLUSIVE: it is not evidence that
+the update was dropped, and must not send the code down a fallback path.
+When the re-fetch fails, raises, or returns a value whose shape you cannot
+safely check, keep the original behavior. Only a read that succeeds and
+positively shows the update was dropped may branch to a fallback
+("could not verify" is not "dropped").
 
 Applied the branch hypothesis: {title}
 Test command: {test_command}

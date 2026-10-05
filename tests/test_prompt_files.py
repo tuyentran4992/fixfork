@@ -393,6 +393,10 @@ class GroundingRulesTest(unittest.TestCase):
     Live evidence (2026-10-05, mcp-atlassian #1578): fixes called .get() on a
     JiraIssue object and one 'verified' by writing the expected value into the
     returned object; both prompt stages must forbid that explicitly.
+    Follow-up (2026-10-05->06, same case): fixes whose verification could not
+    read a result flipped control flow ('could not verify' read as 'dropped')
+    and broke 4 call-contract tests; both prompts must keep an unreadable
+    check from changing behavior.
     """
 
     def test_diagnosis_prompt_carries_grounding_rules(self):
@@ -401,6 +405,9 @@ class GroundingRulesTest(unittest.TestCase):
         self.assertIn("Ground every call you write in evidence", flat)
         self.assertIn("Never call `.get(...)`", flat)
         self.assertIn("fabricated, not verified", flat)
+        self.assertIn("INCONCLUSIVE", flat)
+        self.assertIn("keep the original behavior", flat)
+        self.assertIn('"could not verify" is not "dropped"', flat)
         self.assertIn("must cover every exercised site", flat)
         self.assertIn("are the referee", flat)
 
@@ -415,6 +422,9 @@ class GroundingRulesTest(unittest.TestCase):
         self.assertIn("Ground the follow-up in the evidence", text)
         self.assertIn("never assume dict access", text)
         self.assertIn("must read state the system produced", text)
+        self.assertIn("INCONCLUSIVE", text)
+        self.assertIn("keep the original behavior", text)
+        self.assertIn('"could not verify" is not "dropped"', text)
 
 
 if __name__ == "__main__":
