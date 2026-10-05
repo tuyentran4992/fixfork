@@ -137,6 +137,18 @@ class DefectScanTest(unittest.TestCase):
         self.assertNotIn("tests/test_x.py:1:", scan.block)
         self.assertTrue(any("excluded" in note for note in scan.notes))
 
+    def test_all_protected_refs_fallback_note_names_the_exclusion(self):
+        # Soi chéo 05/10: with ONLY protected refs the scan is skipped for the
+        # exclusion reason - the fallback note must say so instead of implying
+        # there was no usable signature.
+        files = {"tests/test_x.py": 'x = data["classification"]\n'}
+        scan = defect_scan(KEYERROR_LOG, files, ["tests/test_x.py"])
+        self.assertTrue(scan.fallback)
+        self.assertEqual(scan.block, "")
+        self.assertTrue(
+            any("excluded from the scan" in note for note in scan.notes)
+        )
+
     def test_no_refs_notes_nothing_to_scan(self):
         scan = defect_scan(KEYERROR_LOG, {"connector.py": connector_fixture()}, [])
         self.assertFalse(scan.fallback)

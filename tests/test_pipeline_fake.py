@@ -1,6 +1,8 @@
 """End-to-end pipeline test, fully offline (fake router + local sandbox)."""
 
 import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -88,6 +90,80 @@ class PipelineFakeTest(unittest.TestCase):
         self.assertTrue(report.baseline.ok)
         self.assertEqual(report.branches, [])
         self.assertIn("already passes", " ".join(report.notes))
+
+
+class TypeContextPipelineTest(unittest.TestCase):
+    """The type-context files must reach BOTH prompt stages (measured gap).
+
+    Live evidence (2026-10-05, mcp-atlassian #1578): the defining class of the
+    object each fix tried to verify never reached either prompt, and every
+    branch (and its follow-up loop) guessed the type. This test drives the
+    real pipeline on a synthetic repo with a cross-module import and asserts
+    the definition file is rendered, annotated, and noted in the report.
+    """
+
+    def _make_repo(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="fixfork-typectx-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "app").mkdir()
+        (tmp / "tests").mkdir()
+        (tmp / "app" / "__init__.py").write_text("")
+        (tmp / "app" / "core.py").write_text("def add(a, b):\n    return a + b\n")
+        (tmp / "app" / "helpers.py").write_text("class Widget:\n    pass\n")
+        (tmp / "tests" / "__init__.py").write_text("")
+        (tmp / "tests" / "test_core.py").write_text(
+            "import unittest\n\n"
+            "from app.core import add\n"
+            "from app.helpers import Widget  # noqa: F401\n\n\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_add(self):\n"
+            "        self.assertEqual(add(1, 1), 3)\n"
+        )
+        return tmp
+
+    def test_type_context_reaches_diagnosis_and_loop_prompts(self):
+        repo = self._make_repo()
+        reply = json.dumps(
+            [
+                {
+                    "title": "Off-by-one in add",
+                    "rationale": "the addition returns the wrong value",
+                    "edits": [
+                        {
+                            "file": "app/core.py",
+                            "find": "return a + b",
+                            "replace": "return a + b + 0",
+                        }
+                    ],
+                }
+            ]
+        )
+        router = FakeRouter(reason_reply=reply)
+        report = run_pipeline(
+            repo,
+            "python3 -m unittest discover -s tests",
+            router,
+            LocalSandbox(),
+            branches=1,
+            max_rounds=2,
+        )
+
+        # branch stayed red (the edit applies but does not fix) -> loop ran
+        self.assertEqual(report.branches[0].status, BranchStatus.RED)
+        reason_prompts = [c[1] for c in router.calls if c[0] == "reason"]
+        self.assertEqual(len(reason_prompts), 1)
+        prompt = reason_prompts[0]
+        self.assertIn("--- app/helpers.py ---", prompt)
+        self.assertIn("class Widget", prompt)
+        self.assertIn("(type context above: app/core.py, app/helpers.py", prompt)
+        self.assertTrue(any(n.startswith("type context:") for n in report.notes))
+
+        loop_prompts = [c[1] for c in router.calls if c[0] == "loop"]
+        self.assertTrue(loop_prompts)  # red branch consults the loop model
+        loop_text = loop_prompts[0]
+        self.assertIn("--- app/helpers.py ---", loop_text)
+        self.assertIn("class Widget", loop_text)
+        self.assertIn("(type context above:", loop_text)
 
 
 if __name__ == "__main__":

@@ -150,7 +150,7 @@ Instead of a single "suggested fix":
    report shows tokens and USD cost per branch.
 3. **The output is usable artifacts.** A `git apply`-able patch of the winning
    fix, a self-contained HTML report, and the raw model replies for auditing.
-   The test suite (`python3 -m unittest discover -s tests -t .`) runs 277 tests.
+   The test suite (`python3 -m unittest discover -s tests -t .`) runs 298 tests.
 4. **The referee is protected.** Every proposed edit is checked before any
    sandbox work: edits to test files, CI workflows or build/config files are
    refused, the branch is marked `blocked`, and it can never win or be
@@ -169,6 +169,15 @@ Instead of a single "suggested fix":
    failure signature seeds the hypothesis prompt with outside context - the
    model still has to produce exact-match edits that the tests verify, so the
    search is a hint, never a verdict.
+6. **Grounded edits, not type guesses.** The diagnosis prompt and the
+   follow-up loop require every call on an object produced by the repo to
+   match evidence the provided files show (test mocks, class definitions);
+   the files that *define* the names imported by the failing files are
+   resolved and rendered into the prompt (bounded, deterministic), and a
+   verification must read state the system produced - an edit whose check
+   passes only because it wrote the expected value into the returned object
+   is fabricated, not verified (measured failure and repair: 2026-10-05,
+   mcp-atlassian #1578).
 
 ## How it uses Nebius & NVIDIA
 

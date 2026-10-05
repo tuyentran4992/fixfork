@@ -19,6 +19,8 @@ from .hypotheses import (
     parse_edit_object,
     parse_hypotheses,
     render_files,
+    resolve_type_context,
+    type_context_note,
 )
 from .judge import pick_winner
 from .model_router import ModelRouter, RouterError
@@ -41,6 +43,11 @@ are in the file.
 
 Edits to test files, CI workflows and build/config files are OFF-LIMITS and
 will be refused - fix the source code only.
+
+Ground the follow-up in the evidence above: do not call methods or attributes
+the files (or the referee tests' mocks) do not support - never assume dict
+access on an object of an unknown type - and a verification must read state
+the system produced, never a value you wrote yourself.
 
 Applied the branch hypothesis: {title}
 Test command: {test_command}
@@ -119,6 +126,15 @@ def run_pipeline(
     log = baseline_exec.output[-log_tail:] if baseline_exec.output else "(no output)"
     # Files the failure log points at get prompt priority (see render_files).
     refs = extract_refs(log, base_files)
+    # Definition files for the names those refs import: the model must be able
+    # to ground real object types (measured failure 2026-10-05: type guesses).
+    type_refs = resolve_type_context(base_files, refs)
+    if type_refs:
+        report.notes.append(
+            "type context: "
+            + ", ".join(type_refs)
+            + " (definitions of names imported by the log-referenced files)"
+        )
 
     research_block = ""
     if research is not None:
@@ -157,6 +173,7 @@ def run_pipeline(
                 files=base_files,
                 research_block=research_block,
                 refs=refs,
+                type_context=type_refs,
                 max_file_chars=max_file_chars,
                 max_total_chars=max_total_chars,
                 occurrences_block=scan.block,
@@ -264,17 +281,22 @@ def run_pipeline(
                 branch_files = sandbox.read_tree(sid)
                 branch_log = exec_result.output[-log_tail:] if exec_result.output else ""
                 try:
+                    loop_refs = extract_refs(branch_log, branch_files)
+                    loop_type = resolve_type_context(branch_files, loop_refs)
+                    loop_files = render_files(
+                        branch_files,
+                        max_file_chars=max_file_chars,
+                        max_total_chars=max_total_chars,
+                        refs=loop_refs,
+                        type_context=loop_type,
+                    )
+                    loop_files += type_context_note(loop_type, loop_files)
                     loop_reply = router.complete(
                         "loop",
                         LOOP_PROMPT_TEMPLATE.format(
                             title=hypothesis.title,
                             test_command=test_command,
-                            files=render_files(
-                                branch_files,
-                                max_file_chars=max_file_chars,
-                                max_total_chars=max_total_chars,
-                                refs=extract_refs(branch_log, branch_files),
-                            ),
+                            files=loop_files,
                             log=branch_log or "(no output)",
                         ),
                     )

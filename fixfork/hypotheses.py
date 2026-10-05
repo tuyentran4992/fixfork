@@ -31,6 +31,18 @@ explanation needs. Do not split one explanation's edits across hypotheses:
 every branch runs the whole test suite, so a hypothesis that covers only part
 of its own fix is red anyway.
 
+Ground every call you write in evidence from the files above. The failing
+test(s) are the referee: their mocks, fakes and assertions show the real call
+shapes and types (which accessor returns a dict, which returns a model
+object), and a rendered type-context file is the ground truth for that class.
+Never call `.get(...)` - or any dict-only access - on an object whose type you
+cannot show is a dict; a wrong-type call fails at runtime and verifies
+nothing. A verification must READ state the system produced (re-fetch and
+compare) - an edit whose check passes only because it wrote the expected value
+into the returned object is fabricated, not verified. When the same defect
+pattern repeats at call sites or return paths the referee exercises, one
+hypothesis must cover every exercised site.
+
 Reply with ONLY a JSON array, no prose, no markdown fences. Each element:
 {{"title": "...", "rationale": "...", "edits": [{{"file": "path/relative/to/repo", "find": "exact existing text", "replace": "replacement text"}}]}}
 
@@ -46,7 +58,7 @@ Repository: {repo}
 Failing test command: {test_command}
 
 Repository files:
-{files}
+{files}{type_context_note}
 
 {occurrences_block}Failure log (tail):
 {log}
@@ -96,6 +108,192 @@ def extract_refs(log: str, files: dict[str, str] | None) -> list[str]:
 
 # Traceback ``File "..."`` frames and short ``path.py:NN:`` references.
 _REF_RE = re.compile(r'File "([^"]+)"|([A-Za-z0-9_][\w\-./]*\.py):\d+')
+
+
+# --- Type context: definitions of names imported by the failure-referenced files
+# Measured live (2026-10-05, mcp-atlassian #1578): every branch's "verify the
+# update persisted" check called dict access (``.get(...)``) on an object that
+# is a pydantic model, not a dict - the class that proves the type never
+# reached the prompt, so the model guessed it (5/5 branches red). This pass
+# resolves the local imports of the files the failure log references and adds
+# the files that actually DEFINE the imported names to the render set, so the
+# diagnosis model can ground object types before writing edits. Bounded and
+# deterministic: refs in order, top-level imports in source order, first N
+# located definition files win; anything not locatable in the repo is skipped.
+MAX_TYPE_CONTEXT_FILES = 6
+MAX_TYPE_CONTEXT_FILE_CHARS = 100_000
+MAX_TYPE_CONTEXT_NAME_SCAN = 60
+
+
+def _top_level_definition(source: str, name: str) -> bool:
+    """True when ``source`` defines ``name`` at module level (class/def/assign)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == name:
+                return True
+        elif isinstance(node, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+                return True
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == name:
+                return True
+    return False
+
+
+def _module_base(module: str, files: dict[str, str]) -> str | None:
+    """Repo path (without ``.py``) of an absolutely named local module, or None.
+
+    ``mcp_atlassian.models.jira`` must match ``src/mcp_atlassian/models/jira``
+    in a src-layout tree: the module path is matched at a path-component
+    boundary, and the shortest repo path wins for determinism. Stdlib and
+    site-packages modules match nothing and yield None.
+    """
+    suffix = module.replace(".", "/")
+    found: list[str] = []
+    for key in files:
+        if not key.endswith(".py"):
+            continue
+        if key == suffix + ".py" or key.endswith("/" + suffix + ".py"):
+            found.append(key[: -len(".py")])
+            continue
+        idx = key.find(suffix + "/")
+        if idx != -1 and (idx == 0 or key[idx - 1] == "/"):
+            found.append(key[: idx + len(suffix)])
+    if not found:
+        return None
+    return min(found, key=lambda p: (len(p), p))
+
+
+def _name_location(base: str, name: str, files: dict[str, str]) -> str | None:
+    """File under ``base`` (module file or package dir) defining ``name``.
+
+    A module file is accepted only when it defines the name itself; re-export
+    chains are NOT followed. A package is scanned (depth, path) order and the
+    first defining file wins. Oversized files are skipped rather than blamed.
+    """
+    mod = base + ".py"
+    if mod in files:
+        source = files[mod]
+        if len(source) <= MAX_TYPE_CONTEXT_FILE_CHARS and _top_level_definition(
+            source, name
+        ):
+            return mod
+    prefix = base + "/"
+    scanned = 0
+    for key in sorted(
+        (p for p in files if p.startswith(prefix) and p.endswith(".py")),
+        key=lambda p: (p.count("/"), p),
+    ):
+        if scanned >= MAX_TYPE_CONTEXT_NAME_SCAN:
+            break
+        scanned += 1
+        source = files[key]
+        if len(source) > MAX_TYPE_CONTEXT_FILE_CHARS:
+            continue
+        if _top_level_definition(source, name):
+            return key
+    return None
+
+
+def _resolve_imported_name(
+    rel: str, level: int, module: str | None, name: str, files: dict[str, str]
+) -> str | None:
+    """Repo file defining ``name`` imported by ``rel``, or None.
+
+    Relative imports resolve against the importing file's package; absolute
+    ones against the repo tree (see ``_module_base``). ``from . import x``
+    (module is None) resolves the submodule ``x`` directly.
+    """
+    if level > 0:
+        parts = rel.split("/")[:-1]
+        drop = level - 1
+        if drop >= len(parts):
+            return None
+        base_parts = parts[: len(parts) - drop] if drop else list(parts)
+        if module is None:
+            pkg = "/".join(base_parts)
+            for cand in (f"{pkg}/{name}.py", f"{pkg}/{name}/__init__.py"):
+                if cand in files:
+                    return cand
+            return None
+        base_parts += module.split(".")
+        return _name_location("/".join(base_parts), name, files)
+    if not module:
+        return None
+    base = _module_base(module, files)
+    if base is None:
+        return None
+    return _name_location(base, name, files)
+
+
+def resolve_type_context(
+    files: dict[str, str] | None,
+    refs: list[str] | None,
+    max_files: int = MAX_TYPE_CONTEXT_FILES,
+) -> list[str]:
+    """Files defining names imported by the log-referenced files, best first.
+
+    Deterministic and bounded: refs in order, their top-level imports in source
+    order, at most ``max_files`` results, never a file already in ``refs``.
+    Names that cannot be located in the repo tree are skipped silently
+    (stdlib/third-party imports resolve nowhere).
+    """
+    if not files or not refs:
+        return []
+    refset = set(refs)
+    out: list[str] = []
+    seen: set[str] = set()
+    for rel in refs:
+        if not rel.endswith(".py") or rel not in files:
+            continue
+        source = files[rel]
+        if len(source) > MAX_TYPE_CONTEXT_FILE_CHARS:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                target = _resolve_imported_name(
+                    rel, node.level or 0, node.module, alias.name, files
+                )
+                if target is None or target in refset or target in seen:
+                    continue
+                seen.add(target)
+                out.append(target)
+                if len(out) >= max_files:
+                    return out
+    return out
+
+
+def type_context_note(paths: list[str], rendered: str) -> str:
+    """One-line explanation of the type-context files, or "" when none shown.
+
+    Lists only files that actually made it into the rendered prompt (the
+    budget may have dropped some) - the note must not claim evidence the model
+    cannot see. The marker is matched as a WHOLE LINE (soi chéo 05/10: an
+    inline mention of ``--- path ---`` inside some file's content must not
+    count as that file being rendered).
+    """
+    haystack = "\n" + rendered
+    shown = [p for p in paths if f"\n--- {p} ---\n" in haystack]
+    if not shown:
+        return ""
+    return (
+        "\n(type context above: "
+        + ", ".join(shown)
+        + " - definitions of names imported by the log-referenced files;"
+        " use them to ground real object types and call shapes.)"
+    )
 
 
 # --- Machine-scanned defect occurrences (JEV-p4 plan) -----------------------
@@ -249,6 +447,11 @@ def defect_scan(
             "occurrence found in log-referenced files); those files get the "
             "larger fallback budget in the prompt"
         )
+        if excluded:
+            # Soi chéo 05/10: when every ref was protected the note claimed
+            # "no usable signature" without saying the scan was skipped for
+            # another reason - name the exclusion explicitly.
+            note += "; test/CI/build files were excluded from the scan"
         return DefectScan(block="", fallback=True, notes=[note])
     return DefectScan(
         block="",
@@ -262,6 +465,7 @@ def render_files(
     max_file_chars: int = MAX_FILE_CHARS,
     max_total_chars: int = MAX_TOTAL_FILES_CHARS,
     refs: list[str] | None = None,
+    type_context: list[str] | None = None,
     refs_full_file_chars: int = 0,
     refs_full_total_chars: int = 0,
 ) -> str:
@@ -269,7 +473,9 @@ def render_files(
 
     ``refs`` (paths mentioned by the failure log) are rendered before anything
     else: on a budget that cannot fit the whole tree, the files the log points
-    at must reach the model. Remaining files keep the code-before-docs order.
+    at must reach the model. ``type_context`` (definition files resolved from
+    those refs' imports) renders right after the refs and before the rest of
+    the code - the model needs the real types to ground its edits.
 
     ``refs_full_file_chars``/``refs_full_total_chars`` (fallback mode, set when
     the machine defect scan found no usable occurrence list): log-referenced
@@ -283,17 +489,21 @@ def render_files(
     blocks: list[str] = []
     skipped: list[str] = []
     refset = set(refs or ())
+    type_set = set(type_context or ())
     used = 0
     used_refs = 0
-    # Log-referenced files first, then code, then everything else: real
-    # repositories carry CI configs, lockfiles and docs that sort before src/
-    # and tests/, and those would otherwise eat the whole budget before the
-    # model ever sees a source file (observed on a real repo:
-    # python-humanize/humanize - the failing module never reached the prompt).
+    # Log-referenced files first, then their type-context definitions, then
+    # code, then everything else: real repositories carry CI configs, lockfiles
+    # and docs that sort before src/ and tests/, and those would otherwise eat
+    # the whole budget before the model ever sees a source file (observed on a
+    # real repo: python-humanize/humanize - the failing module never reached
+    # the prompt).
     def _budget_rank(rel: str) -> tuple[int, str]:
         if rel in refset:
             return (0, rel)
-        return (1 if rel.endswith(".py") else 2, rel)
+        if rel in type_set:
+            return (1, rel)
+        return (2 if rel.endswith(".py") else 3, rel)
 
     for rel in sorted(files, key=_budget_rank):
         content = files[rel]
@@ -348,6 +558,7 @@ def build_prompt(
     files: dict[str, str] | None = None,
     research_block: str = "",
     refs: list[str] | None = None,
+    type_context: list[str] | None = None,
     max_file_chars: int = MAX_FILE_CHARS,
     max_total_chars: int = MAX_TOTAL_FILES_CHARS,
     occurrences_block: str | None = None,
@@ -359,39 +570,42 @@ def build_prompt(
         scan = defect_scan(log, files, refs)
         occurrences_block = scan.block
         refs_full = scan.fallback
+    rendered = render_files(
+        files,
+        max_file_chars=max_file_chars,
+        max_total_chars=max_total_chars,
+        refs=refs,
+        type_context=type_context,
+        # The fallback budget for log-referenced files is an UPGRADE,
+        # never a downgrade: take the max against the caller's caps so
+        # an explicitly raised --max-file-chars/--max-total-chars is
+        # respected, and couple the total to the per-file value so a
+        # referenced file the caller made room for is not dropped by a
+        # total cap they did not touch. Found while preparing the tomlkit
+        # #619 re-run: in fallback mode a referenced file above the 48k
+        # fallback cap was dropped even when the caller raised the cap
+        # (the tomlkit items.py itself is not log-referenced - it renders
+        # through the normal caps, which the raised flags cover).
+        refs_full_file_chars=(
+            max(max_file_chars, REFS_FALLBACK_FILE_CHARS) if refs_full else 0
+        ),
+        refs_full_total_chars=(
+            max(
+                max_total_chars,
+                REFS_FALLBACK_TOTAL_CHARS,
+                max(max_file_chars, REFS_FALLBACK_FILE_CHARS),
+            )
+            if refs_full
+            else 0
+        ),
+    )
     prompt = PROMPT_TEMPLATE.format(
         n=n,
         repo=repo,
         test_command=test_command,
         log=log,
-        files=render_files(
-            files,
-            max_file_chars=max_file_chars,
-            max_total_chars=max_total_chars,
-            refs=refs,
-            # The fallback budget for log-referenced files is an UPGRADE,
-            # never a downgrade: take the max against the caller's caps so
-            # an explicitly raised --max-file-chars/--max-total-chars is
-            # respected, and couple the total to the per-file value so a
-            # referenced file the caller made room for is not dropped by a
-            # total cap they did not touch. Found while preparing the tomlkit
-            # #619 re-run: in fallback mode a referenced file above the 48k
-            # fallback cap was dropped even when the caller raised the cap
-            # (the tomlkit items.py itself is not log-referenced - it renders
-            # through the normal caps, which the raised flags cover).
-            refs_full_file_chars=(
-                max(max_file_chars, REFS_FALLBACK_FILE_CHARS) if refs_full else 0
-            ),
-            refs_full_total_chars=(
-                max(
-                    max_total_chars,
-                    REFS_FALLBACK_TOTAL_CHARS,
-                    max(max_file_chars, REFS_FALLBACK_FILE_CHARS),
-                )
-                if refs_full
-                else 0
-            ),
-        ),
+        files=rendered,
+        type_context_note=type_context_note(type_context or [], rendered),
         occurrences_block=occurrences_block,
     )
     if research_block:
@@ -1017,11 +1231,21 @@ def generate_hypotheses(
     n: int = 3,
     files: dict[str, str] | None = None,
     refs: list[str] | None = None,
+    type_context: list[str] | None = None,
 ) -> tuple[list[Hypothesis], ModelReply]:
     if refs is None:
         # Same priority rule as the pipeline: files the log points at first.
         refs = extract_refs(log, files)
     reply: ModelReply = router.complete(
-        "reason", build_prompt(repo, test_command, log, n=n, files=files, refs=refs)
+        "reason",
+        build_prompt(
+            repo,
+            test_command,
+            log,
+            n=n,
+            files=files,
+            refs=refs,
+            type_context=type_context,
+        ),
     )
     return parse_hypotheses(reply.text, n=n), reply

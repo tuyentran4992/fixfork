@@ -2,7 +2,14 @@
 
 import unittest
 
-from fixfork.hypotheses import build_prompt, defect_scan, extract_refs, render_files
+from fixfork.hypotheses import (
+    build_prompt,
+    defect_scan,
+    extract_refs,
+    render_files,
+    resolve_type_context,
+    type_context_note,
+)
 
 
 class RenderFilesTest(unittest.TestCase):
@@ -214,6 +221,200 @@ class BuildPromptTest(unittest.TestCase):
         )
         self.assertIn("--- tomlkit/items.py ---", prompt)
         self.assertIn(big, prompt)
+
+
+class ResolveTypeContextTest(unittest.TestCase):
+    """Definition files for names imported by the failure-referenced files.
+
+    Live evidence (2026-10-05, mcp-atlassian #1578): the fix model guessed
+    object types (dict access on a pydantic model) because the defining class
+    never reached the prompt. These tests pin the bounded resolver that adds
+    those definitions to the render set.
+    """
+
+    def test_relative_import_resolves_to_defining_module(self):
+        files = {
+            "pkg/mod.py": "from .helper import helper_fn\n",
+            "pkg/helper.py": "def helper_fn():\n    return 1\n",
+        }
+        self.assertEqual(resolve_type_context(files, ["pkg/mod.py"]), ["pkg/helper.py"])
+
+    def test_parent_relative_import_resolves(self):
+        files = {
+            "pkg/sub/app.py": "from ..lib.util import Widget\n",
+            "pkg/lib/util.py": "class Widget:\n    pass\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["pkg/sub/app.py"]), ["pkg/lib/util.py"]
+        )
+
+    def test_dotted_module_inside_relative(self):
+        files = {
+            "pkg/mod.py": "from .sub.deep import Deep\n",
+            "pkg/sub/deep.py": "class Deep:\n    pass\n",
+        }
+        self.assertEqual(resolve_type_context(files, ["pkg/mod.py"]), ["pkg/sub/deep.py"])
+
+    def test_absolute_import_matches_src_layout(self):
+        files = {
+            "src/pk/models/__init__.py": "from .thing import Thing\n",
+            "src/pk/models/thing.py": "class Thing:\n    pass\n",
+            "src/pk/app.py": "from pk.models import Thing\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["src/pk/app.py"]),
+            ["src/pk/models/thing.py"],
+        )
+
+    def test_from_dot_import_submodule(self):
+        files = {
+            "pkg/__init__.py": "from . import helper\n",
+            "pkg/helper.py": "x = 1\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["pkg/__init__.py"]), ["pkg/helper.py"]
+        )
+
+    def test_stdlib_and_unresolved_names_are_skipped(self):
+        files = {"a.py": "import os\nfrom typing import Any\nfrom .missing import Nope\n"}
+        self.assertEqual(resolve_type_context(files, ["a.py"]), [])
+
+    def test_refs_are_never_offered_as_type_context(self):
+        files = {
+            "pkg/mod.py": "from .helper import helper_fn\n",
+            "pkg/helper.py": "def helper_fn():\n    return 1\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["pkg/mod.py", "pkg/helper.py"]), []
+        )
+
+    def test_order_is_source_order_and_deduped(self):
+        files = {
+            "pkg/mod.py": "from .a import A\nfrom .b import B\nfrom .a import A2\n",
+            "pkg/a.py": "def A():\n    pass\n\n\ndef A2():\n    pass\n",
+            "pkg/b.py": "def B():\n    pass\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["pkg/mod.py"]), ["pkg/a.py", "pkg/b.py"]
+        )
+
+    def test_cap_is_honoured(self):
+        files = {
+            "pkg/mod.py": "from .m1 import X1\nfrom .m2 import X2\nfrom .m3 import X3\n",
+            "pkg/m1.py": "X1 = 1\n",
+            "pkg/m2.py": "X2 = 2\n",
+            "pkg/m3.py": "X3 = 3\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["pkg/mod.py"], max_files=2),
+            ["pkg/m1.py", "pkg/m2.py"],
+        )
+
+    def test_package_re_export_resolves_to_leaf(self):
+        # ``from pkg import Re`` where pkg/__init__ re-exports: the package
+        # scan must reach the leaf that actually defines the name.
+        files = {
+            "pkg/__init__.py": "from .leaf import Re\n",
+            "pkg/mod.py": "from pkg import Re\n",
+            "pkg/leaf.py": "class Re:\n    pass\n",
+        }
+        self.assertEqual(
+            resolve_type_context(files, ["pkg/mod.py"]), ["pkg/leaf.py"]
+        )
+
+    def test_non_python_refs_ignored(self):
+        self.assertEqual(resolve_type_context({"notes.md": "x"}, ["notes.md"]), [])
+
+
+class TypeContextNoteTest(unittest.TestCase):
+    def test_empty_when_nothing_rendered(self):
+        self.assertEqual(type_context_note(["a.py"], "--- b.py ---\nx\n"), "")
+
+    def test_lists_only_files_actually_shown(self):
+        rendered = "--- a.py ---\nA\n"
+        note = type_context_note(["a.py", "b.py"], rendered)
+        self.assertIn("a.py", note)
+        self.assertNotIn("b.py", note)
+        self.assertTrue(note.startswith("\n(type context above: "))
+
+    def test_inline_marker_mention_is_not_counted(self):
+        # Soi chéo 05/10: a mere inline mention of `--- b.py ---` inside some
+        # file's content is not evidence that b.py was rendered.
+        rendered = 'x = "--- b.py ---"\n'
+        self.assertEqual(type_context_note(["b.py"], rendered), "")
+
+
+class RenderFilesTypeContextTest(unittest.TestCase):
+    def test_type_context_ranks_after_refs_before_other_code(self):
+        files = {"r.py": "R" * 30, "t.py": "T" * 30, "m.py": "M" * 30}
+        out = render_files(
+            files,
+            max_file_chars=100,
+            max_total_chars=100,
+            refs=["r.py"],
+            type_context=["t.py"],
+        )
+        self.assertIn("R" * 30, out)
+        self.assertIn("T" * 30, out)
+        self.assertLess(out.index("r.py"), out.index("t.py"))
+        # the ordinary code file is squeezed out and named in the note
+        self.assertNotIn("MMM", out)
+        self.assertIn("m.py", out)
+
+
+class BuildPromptTypeContextTest(unittest.TestCase):
+    def test_prompt_includes_type_files_and_note(self):
+        files = {
+            "pkg/app.py": "from .helpers import Widget\n",
+            "pkg/helpers.py": "class Widget:\n    pass\n",
+        }
+        prompt = build_prompt(
+            "repo",
+            "pytest",
+            "log",
+            n=1,
+            files=files,
+            refs=["pkg/app.py"],
+            type_context=["pkg/helpers.py"],
+            occurrences_block="",
+        )
+        self.assertIn("--- pkg/helpers.py ---", prompt)
+        self.assertIn("class Widget", prompt)
+        self.assertIn("(type context above: pkg/helpers.py", prompt)
+
+    def test_no_note_without_type_context(self):
+        prompt = build_prompt("repo", "pytest", "log", n=1, occurrences_block="")
+        self.assertNotIn("type context above", prompt)
+
+
+class GroundingRulesTest(unittest.TestCase):
+    """The measured type-blind failure must leave a hard rule in both prompts.
+
+    Live evidence (2026-10-05, mcp-atlassian #1578): fixes called .get() on a
+    JiraIssue object and one 'verified' by writing the expected value into the
+    returned object; both prompt stages must forbid that explicitly.
+    """
+
+    def test_diagnosis_prompt_carries_grounding_rules(self):
+        prompt = build_prompt("repo", "pytest", "log", n=3)
+        flat = " ".join(prompt.split())
+        self.assertIn("Ground every call you write in evidence", flat)
+        self.assertIn("Never call `.get(...)`", flat)
+        self.assertIn("fabricated, not verified", flat)
+        self.assertIn("must cover every exercised site", flat)
+        self.assertIn("are the referee", flat)
+
+    def test_loop_prompt_carries_grounding_rules(self):
+        from fixfork.pipeline import LOOP_PROMPT_TEMPLATE
+
+        text = " ".join(
+            LOOP_PROMPT_TEMPLATE.format(
+                title="t", test_command="tc", files="F", log="L"
+            ).split()
+        )
+        self.assertIn("Ground the follow-up in the evidence", text)
+        self.assertIn("never assume dict access", text)
+        self.assertIn("must read state the system produced", text)
 
 
 if __name__ == "__main__":
