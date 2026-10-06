@@ -68,6 +68,17 @@ fixes race on forked branches through a git-style sandbox abstraction
 > [PR #7821](https://github.com/OpenCTI-Platform/connectors/pull/7821)
 > (signed commit, GitHub-verified; automated review recommends approval).
 
+> **A further upstream case** (2026-10-06, habit-hooks #129): dependencies
+> declared in `setup.py`, `setup.cfg` or a `Pipfile` were silently never
+> checked; the red baseline was reproduced first (3 of 6 tests failing), then
+> all three branches of the race went green (6/6 tests on every branch). A fix
+> for the case is submitted as
+> [PR #200](https://github.com/habit-hooks/habit-hooks/pull/200): its
+> acceptance run (measured separately on the case's 7-test suite) goes from
+> 4 failed / 3 passed to 7 passed, re-verified on a fresh clone; the commit
+> `774a1c1` carries a GitHub-verified signature; no CI checks have run yet
+> (first-time-contributor workflow approval pending).
+
 ## How it works
 
 ```mermaid
