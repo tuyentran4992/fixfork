@@ -1,5 +1,7 @@
 # FixFork
 
+Live demo: [fixfork.netlify.app](https://fixfork.netlify.app) · Demo video (under 2 min): [youtu.be/A6xS5TFVJs4](https://youtu.be/A6xS5TFVJs4)
+
 MIT licensed — see [LICENSE](LICENSE).
 
 Give a repo and a failing test. FixFork forks three hypotheses, races them
