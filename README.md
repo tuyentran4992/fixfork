@@ -1,5 +1,7 @@
 # FixFork
 
+[![tests](https://github.com/tuyentran4992/fixfork/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/tuyentran4992/fixfork/actions/workflows/tests.yml) [![Python 3.10/3.12](https://img.shields.io/badge/python-3.10%2F3.12-blue)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Live demo: [fixfork.netlify.app](https://fixfork.netlify.app) · Demo video (under 2 min): [youtu.be/A6xS5TFVJs4](https://youtu.be/A6xS5TFVJs4)
 
 MIT licensed — see [LICENSE](LICENSE).
