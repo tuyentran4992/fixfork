@@ -1,0 +1,17 @@
+[chuan-bi] đã copy bao-cao/chain-nuitka-tinh-chinh-buoc3-10-10/clamp-check → thùng (bỏ .git)
+[tu-kiem] số đường NGUY HIỂM còn mở = 0 (phải = 0)
+[gioi-han] prlimit: RAM 1GB · CPU 300s · 256 tiến trình · file tối đa 256MB
+[ket-qua] mã thoát = 0 · 0.5s
+--- stdout (đuôi) ---
+[clamp] id: uid=65534(nobody) gid=65534(nogroup) groups=65534(nogroup)
+[clamp] CC=cc -> /tmp/nuitka-fas/bin/cc
+a75528eee6c35c57dc190e790873a8538911d93855aa0c61efdd94e6f18eb54e  clamp-check.c
+PASS  3.13.7 (thuc te) (maj=3 min=13 mic=7) -> V_0x3D7 · N_old3x_duoi314
+PASS  3.13.15 (micro=15) (maj=3 min=13 mic=15) -> V_0x3DF · N_old3x_duoi314
+PASS  3.13.16 (CA SOI CHEO — clamp) (maj=3 min=13 mic=16) -> V_0x3DF · N_old3x_duoi314
+PASS  3.13.99 (cuc doan) (maj=3 min=13 mic=99) -> V_0x3DF · N_old3x_duoi314
+PASS  3.14.0 (moc that) (maj=3 min=14 mic=0) -> V_0x3E0 · N_moi314
+PASS  3.14.16 (clamp, van moi) (maj=3 min=14 mic=16) -> V_0x3EF · N_moi314
+PASS  3.15.0 (maj=3 min=15 mic=0) -> V_0x3F0 · N_moi314
+PASS  2.7.18 (clamp, van 2.x) (maj=2 min=7 mic=18) -> V_0x27F · N_old2x
+ALL CLAMP CHECKS PASS (8/8)

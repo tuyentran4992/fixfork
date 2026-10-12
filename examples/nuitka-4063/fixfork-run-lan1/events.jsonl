@@ -1,0 +1,11 @@
+{"t": 0.0, "event": "run_start", "repo": "/tmp/nuitka-fas/Nuitka", "test_command": "sh /data/hackathon/nghien-cuu/repo-7-nuitka-4063/test-nuitka-cach-ly.sh", "branches": 3}
+{"t": 37.18, "event": "baseline_done", "ok": false, "summary": "FAILED (1 of 0)"}
+{"t": 42.032, "event": "research_done", "query": "ValueError message cu (pre-3.14) cho list.index - khac CPython 3.14. sh /data/hackathon/nghien-cuu/repo-7-nuitka-4063/test-nuitka-cach-ly.sh", "n_sources": 5, "sources": ["https://nuitka.net/changelog/Changelog.html", "https://github.com/Nuitka/Nuitka/issues/3766", "https://nuitka.net/posts/nuitka-release-41.html"]}
+{"t": 82.642, "event": "hypotheses_ready", "n": 2, "titles": ["Fix error message format for list.index in Python>=0x300", "Use PyUnicode_FromString for list.index error in Python>=0x300"], "tokens": 52485, "cost": 0.021611}
+{"t": 82.642, "event": "branch_started", "id": 1, "title": "Fix error message format for list.index in Python>=0x300"}
+{"t": 117.687, "event": "branch_done", "id": 1, "status": "green", "summary": "OK (0 tests)", "tests_ok": true, "lines_changed": 2, "tokens": 0, "cost": 0.0, "rounds": 1}
+{"t": 117.687, "event": "branch_started", "id": 2, "title": "Use PyUnicode_FromString for list.index error in Python>=0x300"}
+{"t": 223.103, "event": "branch_done", "id": 2, "status": "red", "summary": "FAILED (1 of 0)", "tests_ok": false, "lines_changed": 11, "tokens": 39102, "cost": 0.002924, "rounds": 2}
+{"t": 223.103, "event": "winner", "id": 1, "reason": "branch 1 passed the tests (OK (0 tests)) with 2 line(s) changed"}
+{"t": 224.05, "event": "rollback", "id": 2}
+{"t": 224.644, "event": "done", "total_tokens": 91587, "cost": 0.024534}

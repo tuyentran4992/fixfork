@@ -1,0 +1,12 @@
+[chuan-bi] đã copy . → thùng (bỏ .git)
+[tu-kiem] số đường NGUY HIỂM còn mở = 0 (phải = 0)
+[gioi-han] prlimit: RAM 1GB · CPU 300s · 256 tiến trình · file tối đa 256MB
+[ket-qua] mã thoát = 0 · 34.0s
+--- stdout (đuôi) ---
+[forced] xac nhan ep nguong:
+643:#elif PYTHON_VERSION < 0x3f0
+d6f571480c4232d72faf3f7352b7c2d58c815366bf46464cbfb83cecaa4a8bdc  nuitka/build/static_src/HelpersLists.c
+[forced] binary (build tu cay ep nguong 0x3f0):
+MSG-A: '9 is not in list'
+MSG-B: '9 is not in list'
+OK (nhanh elif compile duoc + message CU con nguyen: 2/2)

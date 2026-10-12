@@ -1,0 +1,2 @@
+{"role": "reason", "attempt": 1, "max_tokens": 16384, "outcome": "ok", "finish_reason": "stop", "prompt_tokens": 42710, "completion_tokens": 9775, "cost_usd": 0.0216105, "error": ""}
+{"role": "loop", "attempt": 1, "max_tokens": 16384, "outcome": "ok", "finish_reason": "stop", "prompt_tokens": 35893, "completion_tokens": 3209, "cost_usd": 0.0029237399999999998, "error": ""}

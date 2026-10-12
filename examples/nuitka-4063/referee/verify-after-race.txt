@@ -1,0 +1,15 @@
+[chuan-bi] đã copy . → thùng (bỏ .git)
+[tu-kiem] số đường NGUY HIỂM còn mở = 0 (phải = 0)
+[gioi-han] prlimit: RAM 1GB · CPU 300s · 256 tiến trình · file tối đa 256MB
+[ket-qua] mã thoát = 0 · 33.4s
+--- stdout (đuôi) ---
+[referee] cay kiem: /var/tmp/thung-ngoai/thung-e8w9n9ej
+[referee] sha HelpersLists.c:
+ef955a838888ca93dcc4351c0c9778e4bc668b328f9c3f3d5e267a0e2c1b0926  nuitka/build/static_src/HelpersLists.c
+[referee] CPython 3.14 doi chung (cung thung):
+MSG-A: 'list.index(x): x not in list'
+MSG-B: 'list.index(x): x not in list'
+[referee] binary Nuitka (build tu cay nay):
+MSG-A: 'list.index(x): x not in list'
+MSG-B: 'list.index(x): x not in list'
+OK (2 of 2 message checks passed)

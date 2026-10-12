@@ -1,0 +1,48 @@
+
+[
+  {
+    "title": "Fix error message format for list.index in Python>=0x300",
+    "rationale": "The test expects the error message 'list.index(x): x not in list' for ValueError when list.index fails to find the item, but Nuitka produces '9 is not in list' (the old format). The function _LIST_INDEX_COMMON in HelpersLists.c sets the error message for Python>=0x300 using PyErr_Format with '%R is not in list', which includes the item. This must be changed to the fixed string 'list.index(x): x not in list' without formatting.",
+    "edits": [
+      {
+        "file": "nuitka/build/static_src/HelpersLists.c",
+        "find": "    PyErr_Format(PyExc_ValueError, \"%R is not in list\", item);\n    return NULL;",
+        "replace": "    PyErr_SetString(PyExc_ValueError, \"list.index(x): x not in list\");\n    return NULL;"
+      }
+    ]
+  },
+  {
+    "title": "Use PyUnicode_FromString for list.index error in Python>=0x300",
+    "rationale": "The error message for list.index in Python>=0x300 should be a fixed string without item formatting. Instead of PyErr_Format, we can use PyUnicode_FromString to create the error string and SET_CURRENT_EXCEPTION_TYPE0_VALUE1 to set the exception, mirroring the approach used for Python<0x300. This ensures consistent error handling across Python versions.",
+    "edits": [
+      {
+        "file": "nuitka/build/static_src/HelpersLists.c",
+        "find": "#else\n    PyErr_Format(PyExc_ValueError, \"%R is not in list\", item);\n    return NULL;\n#endif",
+        "replace": "#else\n    PyObject *err_string = PyUnicode_FromString(\"list.index(x): x not in list\");\n    if (err_string == NULL) {\n        return NULL;\n    }\n    SET_CURRENT_EXCEPTION_TYPE0_VALUE1(tstate, PyExc_ValueError, err_string);\n    Py_DECREF(err_string);\n    return NULL;\n#endif"
+      }
+    ]
+  },
+  {
+    "title": "Ensure list.index error message is not overridden by caller",
+    "rationale": "Although the callers LIST_INDEX2, LIST_INDEX3, and LIST_INDEX4 immediately return the result of _LIST_INDEX_COMMON, we hypothesize that a macro or inline function might be interfering with the exception state after the call. To be defensive, we add an explicit check in each caller to preserve the ValueError set by _LIST_INDEX_COMMON by verifying that the returned NULL is due to an error and not clearing it inadvertently.",
+    "edits": [
+      {
+        "file": "nuitka/build/static_src/HelpersLists.c",
+        "find": "PyObject *LIST_INDEX2(PyThreadState *tstate, PyObject *list, PyObject *item) {\n    CHECK_OBJECT(list);\n    assert(PyList_CheckExact(list));\n\n    return _LIST_INDEX_COMMON(tstate, (PyListObject *)list, item, 0, Py_SIZE(list));",
+        "replace": "PyObject *LIST_INDEX2(PyThreadState *tstate, PyObject *list, PyObject *item) {\n    CHECK_OBJECT(list);\n    assert(PyList_CheckExact(list));\n\n    PyObject *result = _LIST_INDEX_COMMON(tstate, (PyListObject *)list, item, 0, Py_SIZE(list));\n    if (result == NULL && !ERROR_OCCURRED(tstate)) {\n        /* Should not happen, but be safe */\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_ValueError, \"list.index(x): x not in list\");\n    }\n    return result;"
+      }
+    ],
+    {
+      "file": "nuitka/build/static_src/HelpersLists.c",
+      "find": "PyObject *LIST_INDEX3(PyThreadState *tstate, PyObject *list, PyObject *item, PyObject *start) {\n    CHECK_OBJECT(list);\n    assert(PyList_CheckExact(list));\n\n    PyObject *start_index = Nuitka_Number_IndexAsLong(start);\n\n    if (unlikely(start_index == NULL)) {\n        // TODO: Clearing should be useless here.\n        CLEAR_ERROR_OCCURRED(tstate);\n\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,\n                                        \"slice indices must be integers or have an __index__ method\");\n        return NULL;\n    }\n\n    Py_ssize_t start_ssize;\n#if PYTHON_VERSION < 0x300\n    if (PyInt_CheckExact(start_index)) {\n        start_ssize = PyInt_AS_LONG(start_index);\n    } else {\n        start_ssize = PyLong_AsSsize_t(start_index);\n    }\n#else\n    start_ssize = PyLong_AsSsize_t(start_index);\n#endif\n\n    Py_DECREF(start_index);\n\n    return _LIST_INDEX_COMMON(tstate, (PyListObject *)list, item, start_ssize, Py_SIZE(list));",
+      "replace": "PyObject *LIST_INDEX3(PyThreadState *tstate, PyObject *list, PyObject *item, PyObject *start) {\n    CHECK_OBJECT(list);\n    assert(PyList_CheckExact(list));\n\n    PyObject *start_index = Nuitka_Number_IndexAsLong(start);\n\n    if (unlikely(start_index == NULL)) {\n        // TODO: Clearing should be useless here.\n        CLEAR_ERROR_OCCURRED(tstate);\n\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,\n                                        \"slice indices must be integers or have an __index__ method\");\n        return NULL;\n    }\n\n    Py_ssize_t start_ssize;\n#if PYTHON_VERSION < 0x300\n    if (PyInt_CheckExact(start_index)) {\n        start_ssize = PyInt_AS_LONG(start_index);\n    } else {\n        start_ssize = PyLong_AsSsize_t(start_index);\n    }\n#else\n    start_ssize = PyLong_AsSsize_t(start_index);\n#endif\n\n    Py_DECREF(start_index);\n\n    PyObject *result = _LIST_INDEX_COMMON(tstate, (PyListObject *)list, item, start_ssize, Py_SIZE(list));\n    if (result == NULL && !ERROR_OCCURRED(tstate)) {\n        /* Should not happen, but be safe */\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_ValueError, \"list.index(x): x not in list\");\n    }\n    return result;"
+      }
+    },
+    {
+      "file": "nuitka/build/static_src/HelpersLists.c",
+      "find": "PyObject *LIST_INDEX4(PyThreadState *tstate, PyObject *list, PyObject *item, PyObject *start, PyObject *stop) {\n    CHECK_OBJECT(list);\n    assert(PyList_CheckExact(list));\n\n    PyObject *start_index = Nuitka_Number_IndexAsLong(start);\n\n    if (unlikely(start_index == NULL)) {\n        CLEAR_ERROR_OCCURRED(tstate);\n\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,\n                                        \"slice indices must be integers or have an __index__ method\");\n        return NULL;\n    }\n\n    Py_ssize_t start_ssize;\n#if PYTHON_VERSION < 0x300\n    if (PyInt_CheckExact(start_index)) {\n        start_ssize = PyInt_AS_LONG(start_index);\n    } else {\n        start_ssize = PyLong_AsSsize_t(start_index);\n    }\n#else\n    start_ssize = PyLong_AsSsize_t(start_index);\n#endif\n\n    Py_DECREF(start_index);\n\n    PyObject *stop_index = Nuitka_Number_IndexAsLong(stop);\n\n    if (unlikely(stop_index == NULL)) {\n        Py_DECREF(start_index);\n\n        CLEAR_ERROR_OCCURRED(tstate);\n\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,\n                                        \"slice indices must be integers or have an __index__ method\");\n        return NULL;\n    }\n\n    Py_ssize_t stop_ssize;\n#if PYTHON_VERSION < 0x300\n    if (PyInt_CheckExact(stop_index)) {\n        stop_ssize = PyInt_AS_LONG(stop_index);\n    } else {\n        stop_ssize = PyLong_AsSsize_t(stop_index);\n    }\n#else\n    stop_ssize = PyLong_AsSsize_t(stop_index);\n#endif\n\n    Py_DECREF(stop_index);\n\n    return _LIST_INDEX_COMMON(tstate, (PyListObject *)list, item, start_ssize, stop_ssize);",
+      "replace": "PyObject *LIST_INDEX4(PyThreadState *tstate, PyObject *list, PyObject *item, PyObject *start, PyObject *stop) {\n    CHECK_OBJECT(list);\n    assert(PyList_CheckExact(list));\n\n    PyObject *start_index = Nuitka_Number_IndexAsLong(start);\n\n    if (unlikely(start_index == NULL)) {\n        CLEAR_ERROR_OCCURRED(tstate);\n\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,\n                                        \"slice indices must be integers or have an __index__ method\");\n        return NULL;\n    }\n\n    Py_ssize_t start_ssize;\n#if PYTHON_VERSION < 0x300\n    if (PyInt_CheckExact(start_index)) {\n        start_ssize = PyInt_AS_LONG(start_index);\n    } else {\n        start_ssize = PyLong_AsSsize_t(start_index);\n    }\n#else\n    start_ssize = PyLong_AsSsize_t(start_index);\n#endif\n\n    Py_DECREF(start_index);\n\n    PyObject *stop_index = Nuitka_Number_IndexAsLong(stop);\n\n    if (unlikely(stop_index == NULL)) {\n        Py_DECREF(start_index);\n\n        CLEAR_ERROR_OCCURRED(tstate);\n\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_TypeError,\n                                        \"slice indices must be integers or have an __index__ method\");\n        return NULL;\n    }\n\n    Py_ssize_t stop_ssize;\n#if PYTHON_VERSION < 0x300\n    if (PyInt_CheckExact(stop_index)) {\n        stop_ssize = PyInt_AS_LONG(stop_index);\n    } else {\n        stop_ssize = PyLong_AsSsize_t(stop_index);\n    }\n#else\n    stop_ssize = PyLong_AsSsize_t(stop_index);\n#endif\n\n    Py_DECREF(stop_index);\n\n    PyObject *result = _LIST_INDEX_COMMON(tstate, (PyListObject *)list, item, start_ssize, stop_ssize);\n    if (result == NULL && !ERROR_OCCURRED(tstate)) {\n        /* Should not happen, but be safe */\n        SET_CURRENT_EXCEPTION_TYPE0_STR(tstate, PyExc_ValueError, \"list.index(x): x not in list\");\n    }\n    return result;"
+      }
+    ]
+  }
+]

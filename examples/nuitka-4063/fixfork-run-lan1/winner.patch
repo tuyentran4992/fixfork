@@ -1,0 +1,12 @@
+diff --git a/nuitka/build/static_src/HelpersLists.c b/nuitka/build/static_src/HelpersLists.c
+--- a/nuitka/build/static_src/HelpersLists.c
++++ b/nuitka/build/static_src/HelpersLists.c
+@@ -641,7 +641,7 @@
+     SET_CURRENT_EXCEPTION_TYPE0_VALUE1(tstate, PyExc_ValueError, err_string);
+     return NULL;
+ #else
+-    PyErr_Format(PyExc_ValueError, "%R is not in list", item);
++    PyErr_SetString(PyExc_ValueError, "list.index(x): x not in list");
+     return NULL;
+ #endif
+ }
