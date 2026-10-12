@@ -3,8 +3,8 @@
 Context: [tomlkit #619](https://github.com/python-poetry/tomlkit/issues/619) -
 `Time`/`DateTime` are missing the stdlib `fold` argument. FixFork (dev-stage)
 was pointed at a checkout of tomlkit (`8c959b51c7da2734662af759a7c9f95e9a78060a`)
-with the two failing tests from the issue applied (red baseline: 2 failed,
-92 passed).
+with the two failing tests from the issue applied (red baseline in
+`tests/test_items.py`: 2 failed, 92 passed).
 
 **Result summary: two live runs did not produce a fully green patch on their
 own - the raw outputs below say exactly that.** The final patch in
@@ -39,4 +39,5 @@ reproduced the failure, identified the right area (constructors and
 `item()`/`replace()` round-trips), and proposed candidate edits; the final
 patch was then completed and verified by hand against the repository's own
 suite. FixFork itself gained fixes from this exercise (blank-line-tolerant
-edit application, tests: 156 total in this repository).
+edit application, added between the two runs; its test suite stood at 156
+tests at that time).
