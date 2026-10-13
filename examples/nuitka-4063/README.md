@@ -44,7 +44,7 @@ rests on the referee's exit code, and the referee's own message-check lines
 
 ## Contents
 
-- `fixfork-run-lan1/` — the race: report, stdout (`run.log`), event log, raw
+- `fixfork-run-1/` — the race: report, stdout (`run.log`), event log, raw
   diagnosis reply (`diagnosis.json` — as received; it does not parse as valid
   JSON as a whole, see the report notes), per-attempt and loop sidecars, and
   the winner patch exported from the race (`winner.patch`).
@@ -59,12 +59,15 @@ rests on the referee's exit code, and the referee's own message-check lines
   version (`2.7`, `3.13.x`, `3.14.x`, `3.15`) to the right gate value.
 
 Note: machine-specific absolute paths in the published run logs are redacted
-as `<ws>`.
+as `<ws>`. The names in `run.log` are the tool's default output names
+(`fixfork-nuitka.patch`, `fixfork-nuitka.md`, and so on); the same files are
+published here under shorter names (`winner.patch`, `report.md`,
+`diagnosis.json`, `loops.jsonl`, `attempts.jsonl`).
 
 ## Costs
 
 - Race: 91,587 tokens total (52,485 in diagnosis; router-reported cost
-  ~$0.0245, retries included — as shown in `fixfork-run-lan1/report.md` and
+  ~$0.0245, retries included — as shown in `fixfork-run-1/report.md` and
   `run.log`) —
   `nvidia/nemotron-3-super-120b-a12b` (diagnosis) plus
   `NVIDIA-Nemotron-3-Nano-30B-A3B` (loop), via Nebius Token Factory.

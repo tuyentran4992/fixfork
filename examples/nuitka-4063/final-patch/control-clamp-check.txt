@@ -1,4 +1,4 @@
-[chuan-bi] đã copy bao-cao/chain-nuitka-tinh-chinh-buoc3-10-10/clamp-check → thùng (bỏ .git)
+[chuan-bi] đã copy clamp-check → thùng (bỏ .git)
 [tu-kiem] số đường NGUY HIỂM còn mở = 0 (phải = 0)
 [gioi-han] prlimit: RAM 1GB · CPU 300s · 256 tiến trình · file tối đa 256MB
 [ket-qua] mã thoát = 0 · 0.5s

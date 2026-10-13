@@ -243,9 +243,8 @@ def near_locate(content: str, find: str) -> tuple[int, int, str] | None:
     pathologically repetitive file: refuse. Anything short of the guards is
     refused - the edit is never applied at a guessed location.
 
-    Measured live (race 2c, 2026-10-02): both recorded slip shapes (a
-    truncated long line and a ':' for ',') are rescued; score/margin numbers
-    in ``bao-cao/race-tomlkit-02-10c/verify-near-rescue.txt``.
+    Measured live (2026-10-02): both recorded slip shapes (a truncated long
+    line and a ':' for ',') are rescued.
     """
     find_lines = find.split("\n")
     span = len(find_lines)
@@ -594,7 +593,7 @@ class NebiusSandbox:
 
     Session model: a session's filesystem is a content-addressed *state image*
     (uuid) on the Sandboxes service. Facts behind this design were verified live
-    (see ``nghien-cuu/thi-nghiem-sandbox-29-09/``):
+    during development:
 
     * every SUCCESS instance operation returns ``result_image_uuid`` - the
       filesystem state after the command; an unchanged tree yields the SAME
