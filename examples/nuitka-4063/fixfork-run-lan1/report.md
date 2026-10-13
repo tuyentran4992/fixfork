@@ -1,7 +1,7 @@
 # FixFork run report
 
 - Repo: `/tmp/nuitka-fas/Nuitka`
-- Test command: `sh /data/hackathon/nghien-cuu/repo-7-nuitka-4063/test-nuitka-cach-ly.sh`
+- Test command: `sh <ws>/test-nuitka-cach-ly.sh`
 - Baseline: **FAILED (1 of 0)**
 
 ## Branches
@@ -24,7 +24,7 @@
 
 ## Web research (Tavily)
 
-- Query: `ValueError message cu (pre-3.14) cho list.index - khac CPython 3.14. sh /data/hackathon/nghien-cuu/repo-7-nuitka-4063/test-nuitka-cach-ly.sh`
+- Query: `ValueError message cu (pre-3.14) cho list.index - khac CPython 3.14. sh <ws>/test-nuitka-cach-ly.sh`
 - Source: https://nuitka.net/changelog/Changelog.html
 - Source: https://github.com/Nuitka/Nuitka/issues/3766
 - Source: https://nuitka.net/posts/nuitka-release-41.html
@@ -50,7 +50,7 @@ diff --git a/nuitka/build/static_src/HelpersLists.c b/nuitka/build/static_src/He
 
 ## Notes
 
-- web research (Tavily): 5 source(s) for query: ValueError message cu (pre-3.14) cho list.index - khac CPython 3.14. sh /data/hackathon/nghien-cuu/repo-7-nuitka-4063/test-nuitka-cach-ly.sh
+- web research (Tavily): 5 source(s) for query: ValueError message cu (pre-3.14) cho list.index - khac CPython 3.14. sh <ws>/test-nuitka-cach-ly.sh
 - machine scan unavailable (no usable signature in the log, or no occurrence found in log-referenced files); those files get the larger fallback budget in the prompt
 - reply failed to parse as a whole; salvaged 2 of 4 top-level object(s) from the raw text
 - reply carried 2 of 3 requested hypotheses: kept the complete one(s) instead of discarding over the count (later drops and the branch cap still apply)

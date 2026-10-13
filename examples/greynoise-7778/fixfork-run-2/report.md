@@ -1,7 +1,7 @@
 # FixFork run report
 
-- Repo: `/data/hackathon/nghien-cuu/repo-2-ung-vien/clone-connectors`
-- Test command: `sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh`
+- Repo: `<ws>/clone-connectors`
+- Test command: `sh <ws>/test-greynoise-cach-ly.sh`
 - Baseline: **FAILED (3 of 11)**
 
 ## Branches
@@ -26,7 +26,7 @@
 
 ## Web research (Tavily)
 
-- Query: `KeyError: 'classification' sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh`
+- Query: `KeyError: 'classification' sh <ws>/test-greynoise-cach-ly.sh`
 - Source: https://www.greynoise.io/press/greynoise-releases-2026-state-of-the-edge-report
 - Source: https://www.greynoise.io
 - Source: https://docs.greynoise.io/docs/using-the-greynoise-api
@@ -35,5 +35,5 @@
 
 ## Notes
 
-- web research (Tavily): 5 source(s) for query: KeyError: 'classification' sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh
+- web research (Tavily): 5 source(s) for query: KeyError: 'classification' sh <ws>/test-greynoise-cach-ly.sh
 - diagnosis model proposed 3 hypotheses (12621 tokens, $0.0072)

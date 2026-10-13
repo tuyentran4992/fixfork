@@ -28,6 +28,9 @@ and event logs are also evidence of *where the tool still fails*.
   `master` (`c07d72d`) -> suite `11 passed` (Python 3.12, unprivileged sandbox,
   pytest only).
 
+Note: machine-specific absolute paths in the published run logs are redacted
+as `<ws>`.
+
 ## Costs (router counts, all responses incl. retries)
 
 - run 1: ~$0.0057 in model calls; run 2: ~$0.0095.

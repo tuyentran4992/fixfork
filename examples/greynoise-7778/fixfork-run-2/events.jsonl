@@ -1,6 +1,6 @@
-{"t": 0.0, "event": "run_start", "repo": "/data/hackathon/nghien-cuu/repo-2-ung-vien/clone-connectors", "test_command": "sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh", "branches": 3}
+{"t": 0.0, "event": "run_start", "repo": "<ws>/clone-connectors", "test_command": "sh <ws>/test-greynoise-cach-ly.sh", "branches": 3}
 {"t": 3.12, "event": "baseline_done", "ok": false, "summary": "FAILED (3 of 11)"}
-{"t": 6.723, "event": "research_done", "query": "KeyError: 'classification' sh /data/hackathon/nghien-cuu/repo-2-ung-vien/A-greynoise/test-greynoise-cach-ly.sh", "n_sources": 5, "sources": ["https://www.greynoise.io/press/greynoise-releases-2026-state-of-the-edge-report", "https://www.greynoise.io", "https://docs.greynoise.io/docs/using-the-greynoise-api"]}
+{"t": 6.723, "event": "research_done", "query": "KeyError: 'classification' sh <ws>/test-greynoise-cach-ly.sh", "n_sources": 5, "sources": ["https://www.greynoise.io/press/greynoise-releases-2026-state-of-the-edge-report", "https://www.greynoise.io", "https://docs.greynoise.io/docs/using-the-greynoise-api"]}
 {"t": 31.347, "event": "hypotheses_ready", "n": 3, "titles": ["Use safe dictionary access with default value for missing classification", "Check key presence before accessing classification value", "Invert equality check with safe access to handle missing keys"], "tokens": 12621, "cost": 0.007247}
 {"t": 31.347, "event": "branch_started", "id": 1, "title": "Use safe dictionary access with default value for missing classification"}
 {"t": 51.829, "event": "branch_done", "id": 1, "status": "red", "summary": "FAILED (2 of 11)", "tests_ok": false, "lines_changed": 2, "tokens": 8252, "cost": 0.000819, "rounds": 2}

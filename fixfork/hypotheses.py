@@ -286,7 +286,7 @@ def type_context_note(paths: list[str], rendered: str) -> str:
 
     Lists only files that actually made it into the rendered prompt (the
     budget may have dropped some) - the note must not claim evidence the model
-    cannot see. The marker is matched as a WHOLE LINE (soi chéo 05/10: an
+    cannot see. The marker is matched as a WHOLE LINE (cross-review 2026-10-05: an
     inline mention of ``--- path ---`` inside some file's content must not
     count as that file being rendered).
     """
@@ -302,17 +302,17 @@ def type_context_note(paths: list[str], rendered: str) -> str:
     )
     if len(text) > MAX_NOTE_CHARS:
         # Same cap render_files applies to its own "(not shown: ...)" note: a
-        # note must never grow the prompt unboundedly (soi chéo 05/10).
+        # note must never grow the prompt unboundedly (cross-review 2026-10-05).
         text = text[: MAX_NOTE_CHARS - 4] + " ...)"
     return "\n" + text + "\n"
 
 
-# --- Machine-scanned defect occurrences (JEV-p4 plan) -----------------------
+# --- Machine-scanned defect occurrences (arbitration plan) -----------------------
 # Live evidence (2026-10-01, greynoise #7778 on OpenCTI connectors): the failing
 # file was 32,214 chars, over the per-file prompt cap, so the diagnosis model
 # never saw it; it patched the single site quoted in the last traceback and
-# every branch stayed red (2/11 tests still failing, 7 sites needed). JEV
-# arbitration picked the combined plan: machine-scan the log-referenced files
+# every branch stayed red (2/11 tests still failing, 7 sites needed). The
+# arbitration pass picked the combined plan: machine-scan the log-referenced files
 # for EVERY occurrence of the failing access and put that list in the prompt;
 # when no usable signature can be extracted, fall back to rendering the
 # referenced files under a larger budget instead of silently dropping them.
@@ -410,7 +410,7 @@ def render_occurrences_block(
 
 
 class DefectScan(NamedTuple):
-    """Result of the pre-prompt defect scan (JEV-p4 plan)."""
+    """Result of the pre-prompt defect scan (arbitration plan)."""
 
     block: str
     fallback: bool
@@ -459,7 +459,7 @@ def defect_scan(
             "larger fallback budget in the prompt"
         )
         if excluded:
-            # Soi chéo 05/10: when every ref was protected the note claimed
+            # Cross-review 2026-10-05: when every ref was protected the note claimed
             # "no usable signature" without saying the scan was skipped for
             # another reason - name the exclusion explicitly.
             note += "; test/CI/build files were excluded from the scan"
@@ -739,7 +739,7 @@ class _ParseFailure:
 
     ``None`` cannot carry this meaning: ``json.loads("null")`` is a VALID
     parse whose value is ``None``. Using ``None`` as the failure sentinel
-    conflated a null reply with unparseable output (soi chéo 01/10, aibox).
+    conflated a null reply with unparseable output (cross-review 2026-10-01).
     """
 
     __slots__ = ()
@@ -1000,7 +1000,7 @@ def salvage_top_level_objects(raw: str) -> tuple[list[dict], int, int]:
                     {"title": title, "rationale": rationale, "edits": edits}
                 )
                 if fixes:
-                    # Counted only for KEPT objects (soi chéo 04/10, two
+                    # Counted only for KEPT objects (cross-review 2026-10-04, two
                     # rounds): the note's "needed light repair" must not
                     # count chunks that were later dropped by validation.
                     n_repaired += 1
@@ -1060,14 +1060,14 @@ def parse_hypotheses(
             f"on_duplicates must be 'raise' or 'collapse', got {on_duplicates!r}"
         )
     if not isinstance(n, int) or isinstance(n, bool) or n < 1:
-        # soi chéo 03/10: with n=0 a non-empty reply would slice to [] and
+        # cross-review 2026-10-03: with n=0 a non-empty reply would slice to [] and
         # return silently (and the flat rescue runs before any cap); n<0
         # sliced from the wrong end. Reject the parameter, not the reply.
         raise ValueError(f"n must be an int >= 1, got {n!r}")
     raw = extract_json_array(text)
     items, repairs = loads_json_tolerant(raw)
     if items is PARSE_FAILURE:
-        # Salvage pass (JEV p1, conf 0.92; measured on a real reply - the
+        # Salvage pass (chosen at 0.92 confidence; measured on a real reply - the
         # docket#498 run, 04/10/2026): one broken object can take down the
         # whole-array parse while the other objects are intact. Keep the
         # intact ones instead of throwing a usable fix away; the raw reply
@@ -1093,7 +1093,7 @@ def parse_hypotheses(
             except json.JSONDecodeError as exc:  # keep the parser's detail for debugging
                 raise HypothesisError(f"hypothesis reply is not valid JSON: {exc}") from exc
             # Defensive: PARSE_FAILURE means the strict parse above already failed,
-            # so this line is unreachable today (soi chéo 01/10).
+            # so this line is unreachable today (cross-review 2026-10-01).
             raise HypothesisError("hypothesis reply is not valid JSON")
     if repairs and notes is not None:
         notes.append(
@@ -1102,7 +1102,7 @@ def parse_hypotheses(
     if not isinstance(items, list):
         raise HypothesisError(f"expected {n} hypotheses, got {type(items).__name__}")
     if _is_bare_edit_list(items):
-        # Shape rescue (measured 02/10/2026, JEV p1, conf 1.00): the reply
+        # Shape rescue (measured 02/10/2026; chosen at 1.00 confidence): the reply
         # carried its edits directly - a flat array of {"file", "find",
         # "replace"} objects with no hypothesis wrapper. One array = ONE
         # hypothesis (a single complete fix); the fix still races instead of

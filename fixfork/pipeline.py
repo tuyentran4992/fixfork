@@ -72,7 +72,7 @@ def _parse_loop_edits(text: str, notes: list[str] | None = None) -> list[Edit]:
     if start == -1 or end == -1:
         # The template tells the model it may "reply with an empty list" when
         # it has no further idea; accept that literally instead of burning the
-        # round on a parse error (soi chéo 05/10: template promised a form the
+        # round on a parse error (cross-review 2026-10-05: template promised a form the
         # parser rejected). Only a truly empty bracket pair counts.
         if "{" not in text and "[" in text and "]" in text:
             body = text[text.find("[") + 1 : text.rfind("]")]
@@ -92,14 +92,14 @@ def _parse_loop_edits(text: str, notes: list[str] | None = None) -> list[Edit]:
         except json.JSONDecodeError as exc:
             raise HypothesisError(f"loop reply is not valid JSON: {exc}") from exc
         # Defensive: PARSE_FAILURE means the strict parse above already failed,
-        # so this line is unreachable today (soi chéo 01/10).
+        # so this line is unreachable today (cross-review 2026-10-01).
         raise HypothesisError("loop reply is not valid JSON")
     if not isinstance(data, dict):
         raise HypothesisError("loop reply JSON is not an object")
     if repairs and notes is not None:
         # Same audit rule the diagnosis reply follows: a repaired reply must
         # say so, or the report claims a clean parse that never happened
-        # (soi chéo 01/10, aibox: loop-path repairs were applied silently).
+        # (cross-review 2026-10-01: loop-path repairs were applied silently).
         notes.append(
             f"loop reply was lightly repaired ({repairs} repair step(s)) before parsing"
         )
@@ -114,7 +114,7 @@ def _tail(output: str | None, log_tail: int) -> str:
 
     ``output[-log_tail:]`` with ``log_tail=0`` is ``output[0:]`` - the WHOLE
     log, the opposite of what a zero tail budget asked for - and ``None``
-    would raise TypeError (soi chéo 05/10).
+    would raise TypeError (cross-review 2026-10-05).
     """
     if not output or log_tail <= 0:
         return ""
@@ -228,7 +228,7 @@ def run_pipeline(
     report.hypotheses = hypotheses
     # Count after collapse + the collapse note above tell the full story:
     # "N proposed -> M unique raced". Saying "proposed {len}" here would report
-    # the post-collapse count as if the model proposed it (soi chéo 01/10).
+    # the post-collapse count as if the model proposed it (cross-review 2026-10-01).
     report.notes.append(
         f"diagnosis model produced {len(hypotheses)} unique hypothesis(es) "
         f"({reply.tokens_used} tokens, ${reply.cost_usd:.4f})"
@@ -300,8 +300,8 @@ def run_pipeline(
             sid = sandbox.fork(baseline_sid, base_snapshot, f"branch-{hypothesis.id}")
         except SandboxError as exc:
             # A fork failure used to escape the per-branch handling and kill
-            # the whole run, throwing away every other branch's work (soi chéo
-            # 05/10). Record this branch as ERROR with a done event instead.
+            # the whole run, throwing away every other branch's work (cross-review
+            # 2026-10-05). Record this branch as ERROR with a done event instead.
             result.status = BranchStatus.ERROR
             result.log_tail = f"sandbox error while forking: {exc}"
             report.notes.append(f"branch {hypothesis.id}: fork failed ({exc})")
@@ -330,7 +330,7 @@ def run_pipeline(
                 except SandboxError as exc:
                     # Same rule as the apply/run paths below: a follow-up step
                     # failing must not discard an outcome the tests already
-                    # measured (soi chéo 05/10: read_tree inside the loop used
+                    # measured (cross-review 2026-10-05: read_tree inside the loop used
                     # to flip a measured red branch to error via the outer
                     # except). Keep the last outcome and stop the loop.
                     report.notes.append(
@@ -363,7 +363,7 @@ def run_pipeline(
                     # Same shape as a parsed reply (branch_id/round/text/
                     # tokens/cost_usd) so sidecar consumers can read every
                     # entry uniformly; empty text + zero cost mark the call
-                    # that errored (soi chéo 30/09: schema was non-uniform).
+                    # that errored (cross-review 2026-09-30: schema was non-uniform).
                     report.loop_raw.append(
                         {
                             "branch_id": hypothesis.id,

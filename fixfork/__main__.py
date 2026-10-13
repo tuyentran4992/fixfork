@@ -30,7 +30,7 @@ def _json_safe(value):
     Non-finite floats (NaN/Infinity) become strings so the file stays valid
     for strict JSON consumers; anything else non-serialisable falls back to
     ``json.dumps(default=str)`` at the call site. A sidecar write must never
-    crash the CLI or emit invalid JSON (soi chéo 30/09).
+    crash the CLI or emit invalid JSON (cross-review 2026-09-30).
     """
     if isinstance(value, float) and not math.isfinite(value):
         return str(value)

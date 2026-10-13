@@ -1,7 +1,7 @@
 2026-10-09T20:06:28+00:00
 fixfork HEAD: fa5cd8c9c235e5b32232b4a17196a65807963350 | dirty: 0 file(s)
 repo: /tmp/nuitka-fas/Nuitka @ 30b5b77fe236 — clone sạch, HelpersLists.c sha d5303a6f… (bản CHƯA vá)
-referee: sh /data/hackathon/nghien-cuu/repo-7-nuitka-4063/test-nuitka-cach-ly.sh (sha 2635b397c66b38bfbf0cb72ec86c3a654d3f5db09f8e288471299942167f182f)
+referee: sh <ws>/test-nuitka-cach-ly.sh (sha 2635b397c66b38bfbf0cb72ec86c3a654d3f5db09f8e288471299942167f182f)
 router: NebiusRouter (Token Factory)
 research: Tavily web search (api key from env)
 sandbox: LocalSandbox (local temp dirs)
@@ -15,11 +15,11 @@ branch 2: red | FAILED (1 of 0) | 11 line(s) changed
 winner: branch 1 — branch 1 passed the tests (OK (0 tests)) with 2 line(s) changed
 rollback branch 2 (fork discarded)
 done: 91587 tokens, ~$0.0245
-patch -> /data/hackathon/nghien-cuu/repo-7-nuitka-4063/fixfork-run-lan1/fixfork-nuitka.patch
-html -> /data/hackathon/nghien-cuu/repo-7-nuitka-4063/fixfork-run-lan1/fixfork-nuitka.html
-raw diagnosis -> /data/hackathon/nghien-cuu/repo-7-nuitka-4063/fixfork-run-lan1/fixfork-nuitka.md.diagnosis.json
-raw loop replies -> /data/hackathon/nghien-cuu/repo-7-nuitka-4063/fixfork-run-lan1/fixfork-nuitka.md.loops.jsonl
-model attempts -> /data/hackathon/nghien-cuu/repo-7-nuitka-4063/fixfork-run-lan1/fixfork-nuitka.md.attempts.jsonl (2 call(s), 0 retried)
+patch -> <ws>/fixfork-run-lan1/fixfork-nuitka.patch
+html -> <ws>/fixfork-run-lan1/fixfork-nuitka.html
+raw diagnosis -> <ws>/fixfork-run-lan1/fixfork-nuitka.md.diagnosis.json
+raw loop replies -> <ws>/fixfork-run-lan1/fixfork-nuitka.md.loops.jsonl
+model attempts -> <ws>/fixfork-run-lan1/fixfork-nuitka.md.attempts.jsonl (2 call(s), 0 retried)
 baseline: FAILED (1 of 0)
 research: 5 source(s) for "ValueError message cu (pre-3.14) cho list.index - khac CPyth"
   branch 1: green | OK (0 tests) | 2 line(s) changed
@@ -27,5 +27,5 @@ research: 5 source(s) for "ValueError message cu (pre-3.14) cho list.index - kha
 winner: 1 - branch 1 passed the tests (OK (0 tests)) with 2 line(s) changed
 tokens: 91587 (52485 diagnosis) | cost ~ $0.0245
 router spend: $0.0245 incl. retry attempts (all responses with usage)
-report -> /data/hackathon/nghien-cuu/repo-7-nuitka-4063/fixfork-run-lan1/fixfork-nuitka.md
+report -> <ws>/fixfork-run-lan1/fixfork-nuitka.md
 rc=0

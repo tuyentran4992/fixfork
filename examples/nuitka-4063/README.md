@@ -58,6 +58,9 @@ rests on the referee's exit code, and the referee's own message-check lines
   message; and 8 of 8 checks confirm the version-macro clamp maps every tested
   version (`2.7`, `3.13.x`, `3.14.x`, `3.15`) to the right gate value.
 
+Note: machine-specific absolute paths in the published run logs are redacted
+as `<ws>`.
+
 ## Costs
 
 - Race: 91,587 tokens total (52,485 in diagnosis; router-reported cost
