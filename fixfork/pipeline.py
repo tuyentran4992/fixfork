@@ -239,6 +239,8 @@ def run_pipeline(
         titles=[h.title for h in hypotheses],
         tokens=reply.tokens_used,
         cost=round(reply.cost_usd, 6),
+        latency_ms=reply.latency_ms,
+        response_sha256=reply.response_sha256,
     )
 
     forked_ids: set[int] = set()
@@ -364,6 +366,8 @@ def run_pipeline(
                     # tokens/cost_usd) so sidecar consumers can read every
                     # entry uniformly; empty text + zero cost mark the call
                     # that errored (cross-review 2026-09-30: schema was non-uniform).
+                    # The router's attempts.jsonl still holds the real receipt
+                    # (latency, raw-bytes digest) for that failed call.
                     report.loop_raw.append(
                         {
                             "branch_id": hypothesis.id,
@@ -372,6 +376,8 @@ def run_pipeline(
                             "tokens": 0,
                             "cost_usd": 0.0,
                             "error": str(exc),
+                            "latency_ms": 0,
+                            "response_sha256": "",
                         }
                     )
                     break
@@ -386,6 +392,8 @@ def run_pipeline(
                     "tokens": loop_reply.tokens_used,
                     "cost_usd": round(loop_reply.cost_usd, 6),
                     "text": loop_reply.text,
+                    "latency_ms": loop_reply.latency_ms,
+                    "response_sha256": loop_reply.response_sha256,
                 }
                 report.loop_raw.append(loop_entry)
                 try:

@@ -13,6 +13,7 @@ from fixfork.model_router import (
     estimate_cost,
     parse_chat_completion,
     resolve_model,
+    response_digest,
 )
 
 
@@ -84,6 +85,25 @@ class ParseChatCompletionTest(unittest.TestCase):
     def test_garbage_body(self):
         with self.assertRaises(RouterError):
             parse_chat_completion({"error": "boom"}, role="loop")
+        # A receipt must never crash the router: bodies that cannot be
+        # serialised deterministically yield "" (no receipt), not an exception.
+        self.assertEqual(response_digest({"x": float("nan")}), "")
+        self.assertEqual(response_digest({"x": object()}), "")
+        self.assertEqual(len(response_digest({"x": 1})), 64)
+        # A raw body can exist even when JSON parsing fails: the failed call
+        # must still carry its receipt (found by cross-review 2026-10-19).
+        router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=100)
+
+        def boom(role, prompt, max_tokens):
+            router._last_receipt = {"latency_ms": 7, "response_sha256": "ab" * 32}
+            raise RouterError("bad json")
+
+        with mock.patch.object(router, "_call", side_effect=boom):
+            with self.assertRaises(RouterError):
+                router.complete("loop", "p")
+        self.assertEqual(router.attempts[-1]["outcome"], "call_failed")
+        self.assertEqual(router.attempts[-1]["response_sha256"], "ab" * 32)
+        self.assertEqual(router.attempts[-1]["latency_ms"], 7)
 
 
 class RetryBudgetTest(unittest.TestCase):
@@ -189,7 +209,9 @@ class AttemptLogTest(unittest.TestCase):
 
     def test_attempts_record_each_ladder_step(self):
         router = NebiusRouter(api_key="test", max_tokens=100, max_tokens_cap=400)
-        bodies = [_body(content=None, finish="length"), _body(content="ok")]
+        first = _body(content=None, finish="length")
+        second = _body(content="ok")
+        bodies = [first, second]
         calls: list[int] = []
 
         def fake_call(role, prompt, max_tokens):
@@ -197,7 +219,7 @@ class AttemptLogTest(unittest.TestCase):
             return bodies.pop(0)
 
         with mock.patch.object(router, "_call", side_effect=fake_call):
-            router.complete("loop", "p")
+            reply = router.complete("loop", "p")
         self.assertEqual(calls, [100, 200])
         log = router.attempts
         self.assertEqual([e["outcome"] for e in log], ["budget_exhausted", "ok"])
@@ -207,6 +229,14 @@ class AttemptLogTest(unittest.TestCase):
         self.assertEqual(log[1]["finish_reason"], "stop")
         self.assertEqual(router.retries, 1)
         self.assertGreater(log[0]["cost_usd"], 0)  # failed call burned tokens
+        # every record is a receipt: measured latency + digest of the exact body
+        for entry, source in zip(log, [first, second]):
+            self.assertIsInstance(entry["latency_ms"], int)
+            self.assertGreaterEqual(entry["latency_ms"], 0)
+            self.assertEqual(entry["response_sha256"], response_digest(source))
+            self.assertEqual(len(entry["response_sha256"]), 64)
+        self.assertEqual(reply.response_sha256, response_digest(second))
+        self.assertEqual(reply.latency_ms, log[1]["latency_ms"])
         # the log explains every cent: spend reconciles with the records
         self.assertAlmostEqual(
             router.spent_usd, sum(e["cost_usd"] for e in log), places=9

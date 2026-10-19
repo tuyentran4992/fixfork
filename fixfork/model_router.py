@@ -17,8 +17,10 @@ Verified live on 2026-09-27:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import time
 import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
@@ -86,6 +88,12 @@ class ModelReply:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
+    # Per-call receipt (measured, never inferred): elapsed duration of the
+    # HTTP attempt that produced this reply, and a SHA-256 fingerprint of the
+    # response (raw bytes on the live path). Filled by
+    # ``NebiusRouter.complete``; a parse-only caller gets 0 / "".
+    latency_ms: int = 0
+    response_sha256: str = ""
 
 
 class ModelRouter(Protocol):
@@ -115,6 +123,26 @@ def _int_or_zero(value: object) -> int:
         return max(0, int(value))  # type: ignore[arg-type]
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def _elapsed_ms(started: float) -> int:
+    """Wall-clock duration of one HTTP attempt, rounded to whole milliseconds."""
+    return int(round((time.perf_counter() - started) * 1000))
+
+
+def response_digest(body: object) -> str:
+    """SHA-256 over the canonical JSON of a parsed body - a fallback receipt.
+
+    The live path hashes the raw HTTP bytes in ``NebiusRouter._call``. This
+    helper covers callers that only hold the parsed object (offline routers,
+    mocked tests). It returns "" when the object cannot be serialised
+    deterministically: an empty digest means "no receipt", never a guess.
+    """
+    try:
+        blob = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return ""
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
 def _finish_reason(body: dict | None) -> str:
@@ -271,6 +299,12 @@ class NebiusRouter:
         self.spent_usd = 0.0
         # Per-call log (see class docstring): one record per server call.
         self.attempts: list[dict] = []
+        # Receipt of the most recent HTTP response (latency + SHA-256 of the
+        # raw bytes), set by ``_call`` before JSON parsing. ``None`` when the
+        # call never returned (or when a caller replaces ``_call``, e.g. tests).
+        # The pipeline calls a router from one thread at a time; a concurrent
+        # caller would need a per-thread receipt.
+        self._last_receipt: dict | None = None
         # Retries actually issued (ladder steps after the first call).
         self.retries = 0
         # Nonsensical limits would disable those loop bounds (a zero budget
@@ -297,21 +331,45 @@ class NebiusRouter:
         attempts = 0
         while True:
             attempts += 1
+            self._last_receipt = None
+            started = time.perf_counter()
             try:
                 body = self._call(role, prompt, budget)
             except RouterError as exc:
-                # The call never returned a body; it was still an attempt, and
-                # a run that dies here must leave a readable trace. No usage
-                # to bill, so cost stays 0 and the spend invariant holds.
-                self._log_attempt(role, attempts, budget, "call_failed", error=str(exc))
+                # The call never returned a usable body; it was still an
+                # attempt, and a run that dies here must leave a readable
+                # trace. A raw body may exist even when decoding/JSON failed,
+                # so keep its receipt when there is one. No usage to bill, so
+                # cost stays 0 and the spend invariant holds.
+                failed = self._last_receipt or {}
+                self._log_attempt(
+                    role,
+                    attempts,
+                    budget,
+                    "call_failed",
+                    error=str(exc),
+                    latency_ms=int(failed.get("latency_ms", _elapsed_ms(started))),
+                    response_sha256=str(failed.get("response_sha256") or ""),
+                )
                 raise
+            receipt = self._last_receipt or {}
+            latency_ms = int(receipt.get("latency_ms", _elapsed_ms(started)))
+            digest = str(receipt.get("response_sha256") or response_digest(body))
             try:
                 reply = parse_chat_completion(body, role)
             except ReasoningBudgetExhausted as exc:
                 cost = _usage_cost_usd(role, body)
                 self.spent_usd += cost
                 self._log_attempt(
-                    role, attempts, budget, "budget_exhausted", body, cost, str(exc)
+                    role,
+                    attempts,
+                    budget,
+                    "budget_exhausted",
+                    body,
+                    cost,
+                    str(exc),
+                    latency_ms=latency_ms,
+                    response_sha256=digest,
                 )
                 # Retry only while another call is both allowed and able to
                 # make progress; a stuck ladder must not loop forever.
@@ -327,7 +385,17 @@ class NebiusRouter:
             except EmptyModelReply as exc:
                 cost = _usage_cost_usd(role, body)
                 self.spent_usd += cost
-                self._log_attempt(role, attempts, budget, "empty_reply", body, cost, str(exc))
+                self._log_attempt(
+                    role,
+                    attempts,
+                    budget,
+                    "empty_reply",
+                    body,
+                    cost,
+                    str(exc),
+                    latency_ms=latency_ms,
+                    response_sha256=digest,
+                )
                 if attempts >= self.max_attempts:
                     raise
                 self.retries += 1
@@ -338,10 +406,31 @@ class NebiusRouter:
                 # usage counts, and a fatal call must not vanish from the log.
                 cost = _usage_cost_usd(role, body)
                 self.spent_usd += cost
-                self._log_attempt(role, attempts, budget, "fatal", body, cost, str(exc))
+                self._log_attempt(
+                    role,
+                    attempts,
+                    budget,
+                    "fatal",
+                    body,
+                    cost,
+                    str(exc),
+                    latency_ms=latency_ms,
+                    response_sha256=digest,
+                )
                 raise
+            reply.latency_ms = latency_ms
+            reply.response_sha256 = digest
             self.spent_usd += reply.cost_usd
-            self._log_attempt(role, attempts, budget, "ok", body, reply.cost_usd)
+            self._log_attempt(
+                role,
+                attempts,
+                budget,
+                "ok",
+                body,
+                reply.cost_usd,
+                latency_ms=latency_ms,
+                response_sha256=digest,
+            )
             return reply
 
     def _log_attempt(
@@ -353,6 +442,8 @@ class NebiusRouter:
         body: dict | None = None,
         cost_usd: float = 0.0,
         error: str = "",
+        latency_ms: int = 0,
+        response_sha256: str = "",
     ) -> None:
         """Append one record to ``self.attempts`` (see class docstring).
 
@@ -376,6 +467,8 @@ class NebiusRouter:
                 "completion_tokens": _int_or_zero(usage.get("completion_tokens")),
                 "cost_usd": cost_usd,
                 "error": error[:300],
+                "latency_ms": latency_ms,
+                "response_sha256": response_sha256,
             }
         )
 
@@ -395,8 +488,16 @@ class NebiusRouter:
             },
             method="POST",
         )
+        started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read()
+                # Receipt of exactly what the server sent, taken before any
+                # parsing: a run log can then pin the reply byte for byte.
+                self._last_receipt = {
+                    "latency_ms": _elapsed_ms(started),
+                    "response_sha256": hashlib.sha256(raw).hexdigest(),
+                }
+                return json.loads(raw.decode("utf-8"))
         except Exception as exc:  # any network/HTTP failure -> one clear error type
             raise RouterError(f"Token Factory call failed: {exc}") from exc
