@@ -229,10 +229,13 @@ the local sandbox. The output is a branch race report, a git-applyable
 `fixfork-report.patch` with the winning fix, and, with `--html`, a
 single-file HTML report.
 
-Apply the winner anywhere and re-run the tests:
+Apply the winner on a pristine checkout and re-run the tests. The patch
+paths are relative to the target repository, so for the bundled demo apply
+it from the repo root with `--directory`:
 
 ```bash
-git apply fixfork-report.patch   # on a pristine checkout
+git apply --directory=examples/demo-repo fixfork-report.patch
+cd examples/demo-repo && python3 -m unittest discover -s tests -v
 ```
 
 ## Quickstart (live, Nebius Token Factory)
