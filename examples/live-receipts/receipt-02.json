@@ -1,0 +1,24 @@
+{
+  "sample": "receipt-02",
+  "captured_at_utc": "2026-10-19T01:09:07Z",
+  "endpoint": "https://api.tokenfactory.nebius.com/v1/chat/completions",
+  "model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  "role": "loop",
+  "reply_text": "\\nOK",
+  "note": "One live call, logged by the router exactly as the pipeline records it. The digest covers the raw HTTP response bytes, before parsing.",
+  "attempts": [
+    {
+      "role": "loop",
+      "attempt": 1,
+      "max_tokens": 512,
+      "outcome": "ok",
+      "finish_reason": "stop",
+      "prompt_tokens": 23,
+      "completion_tokens": 49,
+      "cost_usd": 1.3140000000000001e-05,
+      "error": "",
+      "latency_ms": 1094,
+      "response_sha256": "f2e8c0ba28420fa2a850a2c5eb109108968ae5d3d53a37db0d62261c2ed2d819"
+    }
+  ]
+}

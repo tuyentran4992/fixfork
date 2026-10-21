@@ -167,7 +167,9 @@ Instead of a single "suggested fix":
   every call, failed retries included, so spend is auditable call by call.
   Each record also carries the call's elapsed time in milliseconds and, when
   a response body exists, a SHA-256 fingerprint of the raw response bytes, so
-  a logged reply can be checked against what the server actually sent.
+  a logged reply can be checked against what the server actually sent. Three
+  live samples are kept in `examples/live-receipts/`, and
+  `python3 examples/live-receipts/check_receipts.py` re-checks them.
   It detects reasoning-budget exhaustion (`finish_reason=length`, empty or
   partial content) and retries with a doubled `max_tokens` (4096 -> 8192 ->
   16384 -> 32768).
