@@ -23,6 +23,20 @@ abstraction: checkpoint, fork, and rollback. A local backend is the default.
 The Token Factory Sandboxes backend is wired and verified live end to end
 (opt-in, `--sandbox nebius`).
 
+## Who this is for
+
+Maintainers of small Python projects who receive a bug report with a
+failing test attached, and who would otherwise spend an evening guessing
+at the cause. The case FixFork is built for is one where a test file
+reproduces the failure exactly and the correct fix touches a handful of
+source lines: not a refactor, not a new feature, not a redesign.
+
+It does not replace the maintainer's judgement. When no branch goes green,
+the FixFork report names the branch with the fewest failing tests as a
+lead, not a fix. Every candidate patch is run against the project's own
+tests inside the sandbox before it is offered, so the maintainer sees the
+test output, not only the diff.
+
 > Status: early development. The notes below record what is wired and verified today.
 >
 > - The offline pipeline runs end to end. It uses a deterministic fake router and a local sandbox.
