@@ -34,8 +34,21 @@ source lines: not a refactor, not a new feature, not a redesign.
 It does not replace the maintainer's judgement. When no branch goes green,
 the FixFork report names the branch with the fewest failing tests as a
 lead, not a fix. Every candidate patch is run against the project's own
-tests inside the sandbox before it is offered, so the maintainer sees the
-test output, not only the diff.
+tests in the configured backend before it is offered, so the maintainer
+sees the test output, not only the diff.
+
+## Known limits
+
+- FixFork works on Python repositories only, and the test command must be
+  the project's own Python test run.
+- A race only helps when the project's own tests reproduce the failure.
+  When no branch goes green, FixFork does not invent a patch: the report
+  names the branch with the fewest failing tests as a lead, not a fix.
+- The local backend gives each branch its own temporary directory on the
+  host machine, with no operating-system isolation. The Token Factory
+  Sandboxes backend runs the branches inside separate sandbox VMs.
+- FixFork produces a patch and an evidence report. It does not open pull
+  requests, and it does not decide what merges.
 
 > Status: early development. The notes below record what is wired and verified today.
 >
